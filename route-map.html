@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>西湖极速游船 · 赛道总览</title>
+<style>
+  :root { --ink:#1c1a16; --gold:#b8873f; --paper:#f6f1e7; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--paper); color: var(--ink); }
+  #map { position: absolute; inset: 0; }
+  #card {
+    position: absolute; left: 28px; top: 28px; z-index: 10; width: 356px;
+    background: rgba(250,246,238,.94); border: 1px solid rgba(120,96,60,.28);
+    border-radius: 4px; padding: 24px 26px 20px; box-shadow: 0 18px 60px rgba(40,30,15,.16);
+    backdrop-filter: blur(10px);
+  }
+  #card .kicker { font-size: 9.5px; letter-spacing: .42em; color: var(--gold); }
+  #card h1 { margin: 10px 0 4px; font-family: "Songti SC", "SimSun", serif; font-weight: 500; font-size: 30px; letter-spacing: .1em; }
+  #card h1 em { font-style: normal; color: var(--gold); }
+  #card .sub { font-size: 11.5px; color: #6f6250; letter-spacing: .08em; line-height: 1.9; }
+  #stats { display: flex; gap: 26px; margin: 18px 0 14px; }
+  #stats b { display: block; font-family: "DIN Alternate", monospace; font-size: 22px; font-weight: 600; }
+  #stats span { display: block; font-size: 9px; letter-spacing: .16em; color: #8b7a62; margin-top: 3px; }
+  #legend { border-top: 1px dashed rgba(120,96,60,.3); padding-top: 12px; font-size: 11px; color: #5d5140; line-height: 2; }
+  #legend i { display: inline-block; width: 22px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 8px; border-radius: 2px; }
+  #legend .dir { border-top-color: #c0392b; }
+  #legend .st { border-top-color: #b8873f; border-top-style: dashed; }
+  #legend .lm { border-top: 0; width: 8px; height: 8px; background: #b02a1e; border-radius: 50%; margin-right: 22px; }
+  #play {
+    display: block; margin-top: 14px; text-align: center; text-decoration: none;
+    padding: 13px 0; background: #1c1a16; color: #f6f1e7; font-size: 12px; letter-spacing: .3em; border-radius: 2px;
+    transition: background .2s;
+  }
+  #play:hover { background: #b8873f; }
+  #list { position: absolute; right: 26px; top: 28px; z-index: 10; width: 230px; background: rgba(250,246,238,.94);
+    border: 1px solid rgba(120,96,60,.28); border-radius: 4px; padding: 16px 18px; max-height: calc(100% - 60px); overflow: auto;
+    box-shadow: 0 18px 60px rgba(40,30,15,.12); }
+  #list h2 { margin: 0 0 10px; font-size: 10px; letter-spacing: .3em; color: #8b7a62; font-weight: 400; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(120,96,60,.12); font-size: 11.5px; }
+  .row:last-child { border-bottom: 0; }
+  .row em { font-style: normal; color: #9c8b72; font-family: "DIN Alternate", monospace; font-size: 10.5px; }
+  .amap-logo, .amap-copyright { opacity: .55; }
+  @media (max-width: 900px) { #list { display: none; } #card { width: calc(100% - 32px); left: 16px; top: 16px; } }
+</style>
+<script>window._AMapSecurityConfig = { securityJsCode: '20873d228dd3d17bc76c02f68bcc6424' };</script>
+<script src="https://webapi.amap.com/maps?v=2.0&key=04defec2a4c6a24bf966cf55003d0ec3"></script>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="card">
+  <div class="kicker">WEST LAKE SPRINT · COURSE</div>
+  <h1>西湖<em>极速</em>游船</h1>
+  <div class="sub">湖滨起航 · 绕苏堤一周 · 穿过东浦桥与锁澜桥<br>沿岸十七处名胜依次掠过</div>
+  <div id="stats">
+    <div><b id="s-km">8.73</b><span>KM 赛程</span></div>
+    <div><b>20</b><span>浮标检查点</span></div>
+    <div><b>240</b><span>KM/H 极速</span></div>
+  </div>
+  <div id="legend">
+    <div><i class="dir"></i>竞速航线（逆时针）</div>
+    <div><i class="st"></i>苏堤 / 杨公堤 / 白堤</div>
+    <div><i class="lm"></i>地标建筑</div>
+  </div>
+  <a id="play" href="index.html">进 入 游 戏</a>
+</div>
+
+<div id="list"><h2>沿 途 地 标</h2><div id="rows"></div></div>
+
+<script src="js/course-data.js"></script>
+<script>
+  const C = window.COURSE;
+  const LON0 = 120.145, LAT0 = 30.245;
+  const MX = 111320 * Math.cos(LAT0 * Math.PI / 180), MZ = 110540;
+  const ll = (x, z) => [x / MX + LON0, -z / MZ + LAT0];
+
+  document.getElementById('s-km').textContent = (C.total / 1000).toFixed(2);
+
+  const map = new AMap.Map('map', {
+    zoom: 14.2, center: [120.1435, 30.2465], viewMode: '2D',
+    mapStyle: 'amap://styles/whitesmoke',
+    features: ['bg', 'road', 'point'],
+    showLabel: true, jogEnable: false, rotateEnable: false, pitchEnable: false
+  });
+
+  // 水域
+  new AMap.Polygon({
+    path: C.water.map(p => ll(p[0], p[1])),
+    strokeColor: '#6f9db5', strokeWeight: 1.4, strokeOpacity: .9,
+    fillColor: '#bcd9e6', fillOpacity: .55, zIndex: 10
+  }).setMap(map);
+
+  // 岛
+  C.islands.forEach(r => new AMap.Polygon({
+    path: r.map(p => ll(p[0], p[1])),
+    strokeColor: '#a89a7d', strokeWeight: 1, fillColor: '#e8e2d2', fillOpacity: .95, zIndex: 12
+  }).setMap(map));
+
+  // 堤
+  for (const nm in C.causeways) C.causeways[nm].forEach(line => {
+    if (line.length < 2) return;
+    new AMap.Polyline({
+      path: line.map(p => ll(p[0], p[1])),
+      strokeColor: '#b9a887', strokeWeight: 7, strokeOpacity: .95, lineJoin: 'round', zIndex: 14
+    }).setMap(map);
+  });
+
+  // 航线（描边 + 主线）
+  const route = C.center.map(p => ll(p[0], p[1]));
+  new AMap.Polyline({ path: route, strokeColor: '#ffffff', strokeWeight: 9, strokeOpacity: .85, lineJoin: 'round', zIndex: 20 }).setMap(map);
+  new AMap.Polyline({ path: route, strokeColor: '#c0392b', strokeWeight: 4, strokeOpacity: 1, lineJoin: 'round', showDir: true, dirColor: '#ffffff', zIndex: 21 }).setMap(map);
+
+  // 起点
+  const start = ll(C.start.x, C.start.z);
+  new AMap.Marker({
+    position: start, zIndex: 40,
+    content: '<div style="width:15px;height:15px;border-radius:50%;background:#2e8b57;border:3px solid #fff;box-shadow:0 0 0 4px rgba(46,139,87,.25),0 4px 10px rgba(0,0,0,.3)"></div>',
+    offset: new AMap.Pixel(-7, -7)
+  }).setMap(map);
+
+  // 检查点
+  C.gates.forEach((g, i) => {
+    new AMap.Marker({
+      position: ll(g.x, g.z), zIndex: 30,
+      content: '<div style="width:7px;height:7px;border-radius:50%;background:#fff;border:1.5px solid #c0392b"></div>',
+      offset: new AMap.Pixel(-3.5, -3.5)
+    }).setMap(map);
+  });
+
+  // 地标
+  const rows = [];
+  C.landmarks.forEach(l => {
+    if (l.name === '城隍阁') return;
+    const pos = ll(l.x, l.z);
+    const d = document.createElement('div');
+    d.style.cssText = 'width:9px;height:9px;border-radius:50%;background:#b02a1e;border:2px solid #faf6ee;box-shadow:0 2px 6px rgba(0,0,0,.35)';
+    new AMap.Marker({ position: pos, content: d, offset: new AMap.Pixel(-4.5, -4.5), zIndex: 35, title: l.name }).setMap(map);
+    new AMap.Text({
+      text: l.name, position: pos, offset: new AMap.Pixel(9, -7), zIndex: 36,
+      style: { 'background': 'transparent', 'border': 'none', 'color': '#4a3f2e', 'font-size': '11px', 'text-shadow': '0 1px 3px rgba(255,255,255,.95)', 'white-space': 'nowrap' }
+    }).setMap(map);
+    rows.push({ name: l.name, s: l });
+  });
+
+  // 按里程排序列表
+  const withS = rows.map(r => {
+    let bi = 0, bd = 1e9;
+    C.center.forEach((p, i) => { const dd = Math.hypot(p[0] - r.s.x, p[1] - r.s.z); if (dd < bd) { bd = dd; bi = i; } });
+    return { name: r.name, s: C.cum[bi] };
+  }).sort((a, b) => a.s - b.s);
+  document.getElementById('rows').innerHTML = withS.map(r =>
+    '<div class="row"><span>' + r.name + '</span><em>' + (r.s / 1000).toFixed(2) + ' km</em></div>').join('');
+
+  // 视野
+  setTimeout(() => {
+    const pad = window.innerWidth > 900 ? [90, 300, 90, 430] : [80, 24, 80, 24];
+    map.setFitView(null, false, pad);
+  }, 400);
+</script>
+</body>
+</html>
