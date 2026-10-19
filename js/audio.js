@@ -73,10 +73,11 @@ window.AudioFX = (function () {
     return buf.duration;
   }
 
-  /* 采样式惊呼：翻船三连呼时三声重叠，单声增益压到 0.30 留混音余量 */
+  /* 采样式惊呼：翻船三连呼时三声重叠，单声增益 0.60（比普通撞击更响，已按需求提到原来 0.30 的两倍）。
+     三声叠在一起会顶到 0dBFS 附近，靠 voiceGuard 兜住，所以这里可以放心加。 */
   function playScreamSample(buf, male, loud) {
     return playVoice(buf, {
-      gain: (loud ? 0.30 : VOICE_GAIN) * lufsTrim(window.SCREAM_INFO),
+      gain: (loud ? 0.60 : VOICE_GAIN) * lufsTrim(window.SCREAM_INFO),
       rate: 1.0 + Math.random() * 0.05,
       pan: (male ? -0.28 : 0.28) + (Math.random() - 0.5) * 0.16
     });
@@ -91,13 +92,13 @@ window.AudioFX = (function () {
       master = ctx.createGain(); master.gain.value = 0.55; master.connect(ctx.destination);
       // 语音专用总线：惊叫与换档加速共用同一条 + 同一档增益，两条素材听感音量才一致
       voiceBus = ctx.createGain(); voiceBus.gain.value = 1.9;
-      /* 限幅保险：素材本身已压到 -1dBFS，但翻船时三声惊呼会叠在一条总线上，
-         叠加峰值可能越过 0dBFS。这里只在叠加时介入（阈值 -3dB、12:1、软拐点 6dB），
-         单声语音（总线电平约 -6dBFS）完全不碰。 */
+      /* 限幅保险：素材已压到 -1dBFS，但翻船时三声惊呼（90/240/430ms 各一声）会叠在一条总线上。
+         阈值压到 -2dB、拐点只有 3dB：单声（约 -4dBFS）落在膝外基本不被压，
+         三声叠加（约 +3.9dBFS）才会被 30:1 硬压回 -2dBFS 以内。这样"响度翻倍"和"不削波"能同时成立。 */
       try {
         voiceGuard = ctx.createDynamicsCompressor();
-        voiceGuard.threshold.value = -3; voiceGuard.knee.value = 6;
-        voiceGuard.ratio.value = 12; voiceGuard.attack.value = 0.003; voiceGuard.release.value = 0.12;
+        voiceGuard.threshold.value = -2; voiceGuard.knee.value = 3;
+        voiceGuard.ratio.value = 30; voiceGuard.attack.value = 0.002; voiceGuard.release.value = 0.10;
         voiceBus.connect(voiceGuard); voiceGuard.connect(master);
       } catch (e) {
         voiceGuard = null; voiceBus.connect(master);

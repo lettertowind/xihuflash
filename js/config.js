@@ -83,14 +83,27 @@ window.CFG = {
   },
 
   /* 三档速度：Shift 循环切换（1 慢 / 2 快 / 3 自动巡航）
-     一档略低于原 W 速度（54），二档 = 原 W+Shift（82），三档沿环线自动驾驶 */
+     本轮按需求调参：
+       一档 速度值减半     28 → 14 m/s（166 → 50.4 km/h）
+       巡航 基础速度 -30km/h 100.8 → 70.8 km/h（19.67 m/s）
+       二档 -20km/h        295.2 → 275.2 km/h（76.44 m/s）
+       巡航提速上限 cruiseBoost 是上一轮定下的历史值（旧慢档 46），保持不变，
+       它仍落在"巡航基础 19.67"与"快档 76.44"之间，作为手机端前拉提速的上限依然合理。
+
+     慢档速度的两个数值各有用途，别混：
+       slow = 14  —— 现役一档满速
+       cruiseSlow = 19.67 —— 三档巡航的【基础速度】（比手动慢档略高，因为不用掌舵） */
   gears: {
-    slow: 46,
-    fast: 82,
-    cruiseSlow: 46,
-    cruiseFast: 82,
-    accelSlow: 14,
+    slow: 14,               // 一档 ~50km/h
+    fast: 76.44,            // 二档 ~275km/h（原 82 / 295km/h，-20km/h）
+    cruiseSlow: 19.67,      // 三档基础 ~71km/h（原 28 / 100.8km/h，-30km/h）
+    // 巡航提速上限：在原来 275km/h（76.44m/s）的基础上下调 80km/h → 195.2km/h
+    // 两端统一用同一个上限：电脑按 W、手机前拉摇杆，都是 195km/h 封顶
+    cruiseFast: 54.22,      // ≈195.2 km/h
+    cruiseBoost: 54.22,     // 与电脑端一致
+    accelSlow: 11,          // 慢档起步也要慢，别让"慢船"两秒就窜到满速
     accelFast: 27,
+    accelCruise: 16,        // 三档提速（19.67→46）的加速度
     lookAhead: 1.55,        // 巡航前视距离 = 速度 × 此系数（米）
     lookMin: 26,
     lookMax: 130,
@@ -124,8 +137,8 @@ window.CFG = {
     tiers: [
       { name: 'cpu', dpr: 0.75, terrain: 128, trees: 180, treeNear: 40, reflect: false, shadow: false, rain: 600, mist: 1, ai: 2, patchSeg: 48, aniso: 1,
         birds: { egret: 0, swallow: 4, duck: 0 }, figures: { boat: 1, walk: 14, visitPerMark: 4, armFrame: 4 }, villages: 26, waterside: 60 },
-      { name: 'low', dpr: 1.00, terrain: 192, trees: 500, treeNear: 120, reflect: false, shadow: false, rain: 1500, mist: 2, ai: 4, patchSeg: 64, aniso: 2,
-        birds: { egret: 2, swallow: 8, duck: 6 }, figures: { boat: 2, walk: 42, visitPerMark: 7, armFrame: 3 }, villages: 44, waterside: 110 },
+      { name: 'low', dpr: 1.40, terrain: 192, trees: 700, treeNear: 280, reflect: true, shadow: false, rain: 3200, mist: 4, ai: 5, patchSeg: 64, aniso: 4,
+        birds: { egret: 3, swallow: 10, duck: 8 }, figures: { boat: 2, walk: 78, visitPerMark: 10, armFrame: 2 }, villages: 56, waterside: 160 },
       { name: 'mid', dpr: 1.25, terrain: 224, trees: 750, treeNear: 260, reflect: true, shadow: false, rain: 3000, mist: 4, ai: 6, patchSeg: 80, aniso: 4,
         birds: { egret: 3, swallow: 12, duck: 12 }, figures: { boat: 3, walk: 72, visitPerMark: 10, armFrame: 2 }, villages: 64, waterside: 165 },
       { name: 'high', dpr: 1.50, terrain: 256, trees: 1000, treeNear: 400, reflect: true, shadow: true, rain: 5000, mist: 6, ai: 8, patchSeg: 96, aniso: 8,

@@ -32,6 +32,82 @@ window.Boat = (function () {
     headLight.position.set(4.0, 1.6, 0.58);
     group.add(headLight);
 
+    /* ---------------- 船头探照灯：锥形光束 ----------------
+       湖面用的是自定义 shader，不参与常规光照，所以单加 SpotLight 照不亮水面。这里三层叠：
+         ① SpotLight —— 真实投射，照亮沿岸景物、别的船、船上人物
+         ② 水面光斑（XZ 平面）—— 第一视角主要看到的"前方一片被照亮"，锥形展开、边缘高斯柔化
+         ③ 竖直光带（XY 平面）—— 侧视/第三人称时的雾中光柱轮廓
+       ②③ 用同一个 shader、十字交叉摆放。不用实心圆锥壳：相机在第一视角时位于锥体内部，
+       从内部看锥壳会变成一个"甜甜圈"状的环，既不像光柱也不自然。
+       强度统一乘 Weather.lampK()：白天为 0 整组不可见；雾越浓散射越强，光柱越实。 */
+    const BEAM_LEN = 58, BEAM_HALF = 18;      // 半角约 0.30rad，58m 处半径 ≈ 17.9m
+    const headSpot = new THREE.SpotLight(0xffd7a8, 0, 95, 0.30, 0.88, 1.45);
+    headSpot.position.set(4.05, 1.72, 0.0);
+    headSpot.target.position.set(64, 0.10, 0);       // target 也在 group 内，自动跟船首方向
+    group.add(headSpot);
+    group.add(headSpot.target);
+
+    /* 光锥着色器：uv.x = 沿光束（0 船头 → 1 远端），uv.y = 横向
+       横向用高斯核做"边缘柔和过渡"，轴向用幂次衰减做"随距离自然衰减"，
+       再叠一层沿轴流动的细纹，避免整块光斑板结 */
+    const beamMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(0xffd9a6) },
+        uStrength: { value: 0 },
+        uTime: { value: 0 },
+        uEdge: { value: 26.0 }                    // 波纹密度，竖直/水面两片可分别调
+      },
+      vertexShader: [
+        'varying vec2 vUv;',
+        'void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
+      ].join('\n'),
+      fragmentShader: [
+        'uniform vec3 uColor; uniform float uStrength; uniform float uTime; uniform float uEdge;',
+        'varying vec2 vUv;',
+        'void main() {',
+        '  float t = clamp(vUv.x, 0.0, 1.0);',
+        '  float lat = (vUv.y - 0.5) * 2.0;',
+        '  float spread = 0.10 + 0.90 * t;',            // 锥形：越远越宽
+        '  float d = abs(lat) / spread;',                // 0 = 中轴，1 = 锥边
+        '  float lateral = exp(-d * d * 3.4);',          // 高斯横向：中心亮、边缘软
+        '  float core = exp(-d * d * 15.0) * 0.55;',     // 中轴再加一道亮带，别糊成一团
+        '  float cut = smoothstep(1.0, 0.82, d);',       // 锥边再切一刀，去掉硬角
+        '  float axial = pow(1.0 - t, 1.30);',           // 距离衰减
+        // 水面波纹 / 雾的密度起伏，把光斑打碎，别像一块塑料片
+        '  float rip = 0.76 + 0.24 * sin(lat * 9.0 + uTime * 1.8)',
+        '                         * sin(t * 30.0 - uTime * 2.4 + lat * 3.0);',
+        '  float a = (lateral + core) * cut * axial * rip * uStrength;',
+        '  gl_FragColor = vec4(uColor, a);',
+        '}'
+      ].join('\n'),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false
+    });
+
+    /* ② 水面光斑：贴水面的锥形亮区，第一视角的主力观感 */
+    const waterSpot = new THREE.Mesh(new THREE.PlaneGeometry(BEAM_LEN, BEAM_HALF * 2), beamMat);
+    waterSpot.rotation.x = -Math.PI / 2;
+    waterSpot.position.set(BEAM_LEN / 2 + 3.9, 0.15, 0);
+    waterSpot.frustumCulled = false;
+    waterSpot.renderOrder = 5;
+    const spotPivot = new THREE.Group();
+    spotPivot.add(waterSpot);
+    scene.add(spotPivot);
+
+    /* ③ 竖直光带：侧视时看得到的雾中光柱（与水面那片交叉成十字） */
+    const beamMatV = beamMat.clone();
+    beamMatV.uniforms = THREE.UniformsUtils.clone(beamMat.uniforms);
+    beamMatV.uniforms.uStrength.value = 0;
+    beamMatV.uniforms.uEdge.value = 18.0;
+    const beamWall = new THREE.Mesh(new THREE.PlaneGeometry(BEAM_LEN, BEAM_HALF * 2), beamMatV);
+    beamWall.position.set(BEAM_LEN / 2 + 3.9, 1.72, 0);
+    beamWall.frustumCulled = false;
+    beamWall.renderOrder = 4;
+    group.add(beamWall);
+
     /* 尾迹 */
     const MAXW = 240;
     const wpos = new Float32Array(MAXW * 2 * 3);
@@ -231,8 +307,11 @@ window.Boat = (function () {
       const gear = state.gear;
       let cap, accel;
       if (gear === 3) {
-        cap = input.cruiseFast ? GR.cruiseFast : GR.cruiseSlow;
-        accel = input.cruiseFast ? GR.accelFast : GR.accelSlow;
+        /* 三档：巡航默认走 cruiseSlow；input.cruiseCap 由 game.js 按平台给定上限——
+           电脑按 W → cruiseFast(82)，手机前拉摇杆 → cruiseBoost(46)；
+           两者都只是换一个"封顶值"，速度爬到上限后停住，不会越界。 */
+        cap = input.cruiseCap != null ? input.cruiseCap : GR.cruiseSlow;
+        accel = input.cruiseCap != null && input.cruiseCap > GR.cruiseSlow ? GR.accelCruise : GR.accelSlow;
       } else if (gear === 2) {
         cap = GR.fast; accel = GR.accelFast;
       } else {
@@ -454,6 +533,18 @@ window.Boat = (function () {
         const flick = 0.92 + 0.08 * Math.sin(state.bob * 9.7) * Math.sin(state.bob * 4.3 + 1.7);
         if (model.lamps) BoatModel.setLamps(model, k, flick);
         headLight.intensity = k * flick * 2.6;
+
+        /* 探照灯：雾越浓，散射越强，光柱越"有形"（夜间雾密度本来就更高，所以夜里更明显）。
+           强度全部乘 k，白天为 0，整组光束自然消失，不需要额外开关。 */
+        const fogK = UTIL.clamp(Weather.fogDensity / 0.00078, 0.7, 2.2);
+        headSpot.intensity = k * flick * 2.4;
+        beamMat.uniforms.uStrength.value = k * flick * 0.46 * fogK;
+        beamMat.uniforms.uTime.value = state.bob;
+        beamMatV.uniforms.uStrength.value = k * flick * 0.24 * fogK;
+        beamMatV.uniforms.uTime.value = state.bob;
+        // 水面光斑固定贴在水面上，只跟船位和航向，不跟船的俯仰横滚（否则会插进水里）
+        spotPivot.position.set(state.x, 0.15, state.z);
+        spotPivot.rotation.y = -state.heading;
       }
     };
 

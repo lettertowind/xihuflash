@@ -16,7 +16,7 @@
 </script>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #171f22; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #171f22; overscroll-behavior: none; }
   body {
     font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
     color: #eef2ec; user-select: none; -webkit-user-select: none;
@@ -167,9 +167,19 @@
   #touch { position: absolute; inset: 0; display: none; pointer-events: none; }
   body.touch #touch { display: block; }
   #stick { position: absolute; left: max(22px, env(safe-area-inset-left)); bottom: calc(84px + env(safe-area-inset-bottom)); width: 124px; height: 124px; border-radius: 50%;
-    border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.05); pointer-events: auto; touch-action: none; }
+    border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.05); pointer-events: auto; touch-action: none;
+    transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+  /* 阈值圈：内圈以内只转向，越过它就进入"前进"，给手一个看得见的临界点 */
+  #stick::after { content: ""; position: absolute; left: 50%; top: 50%; width: 58%; height: 58%;
+    transform: translate(-50%, -50%); border-radius: 50%; border: 1px dashed rgba(255,255,255,.20);
+    pointer-events: none; transition: border-color .18s ease; }
   #stick .knob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
-    background: rgba(238,242,236,.35); border: 1px solid rgba(255,255,255,.5); }
+    background: rgba(238,242,236,.35); border: 1px solid rgba(255,255,255,.5);
+    transition: background .16s ease, border-color .16s ease; }
+  /* 推过阈值：整圈变暖色，明确告诉玩家"已经在前进" */
+  #stick.run { border-color: rgba(255,198,120,.72); background: rgba(255,186,96,.11); box-shadow: 0 0 22px rgba(255,186,96,.16); }
+  #stick.run::after { border-color: rgba(255,206,140,.55); }
+  #stick.run .knob { background: rgba(255,208,150,.52); border-color: rgba(255,222,175,.9); }
   #pedals { position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: calc(112px + env(safe-area-inset-bottom)); display: flex; gap: 14px; pointer-events: auto; }
   .pedal { width: 84px; height: 84px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
     background: rgba(255,255,255,.07); display: flex; align-items: center; justify-content: center; font-size: 12px; letter-spacing: .14em;
@@ -325,7 +335,7 @@
         <i>W / ↑ 油门</i><i>S / ↓ 减速</i><i>A D 转向</i><i>Shift 换档</i><i>鼠标移动 环视</i><i>点击 回正</i><i>V 视角</i><i>F 结算</i><i>R 重来</i><i>M 音效</i>
       </div>
       <div class="keys touchkeys">
-        <i>左下摇杆 转向</i><i>右下 油门</i><i>紫色键 换档</i><i>拖屏 环视</i><i>点屏 回正</i>
+        <i>摇杆小幅 转向</i><i>摇杆推到底 前进</i><i>三档前拉 提速</i><i>紫色键 换档</i><i>拖屏 环视</i><i>点屏 回正</i>
       </div>
       <button class="btn" id="startbtn">开 始 游 湖</button>
     </div>
@@ -350,10 +360,9 @@
   <div id="touch">
     <div id="stick"><div class="knob"></div></div>
     <div id="pedals">
-      <div class="pedal" id="pthrottle">油门</div>
       <div class="pedal gear" id="pgear">换档</div>
     </div>
-    <div id="touchhint">左侧摇杆转向 · 右侧油门 / 换档</div>
+    <div id="touchhint">摇杆小幅转向 · 推过虚线前进 · 换档</div>
   </div>
 
   <div id="rotate"><div class="ic">⟳</div><div class="t">请 横 屏 游 玩</div><div class="s">ROTATE YOUR DEVICE</div><button id="rotbtn">仍 然 继 续</button></div>

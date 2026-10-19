@@ -129,16 +129,22 @@ window.Landmarks = (function () {
       if (!p) continue;
       const g = buildExtra(ex.kind, ex.name, m);
       // 大建筑多点采样取最高地面，防坡地悬空；落差大时垫石砌台基
-      let gy = 0, gyMin = 1e9;
+      let gy = 0, gyMin = 1e9, gyMinRaw = 1e9;
       for (let k = 0; k < 9; k++) {
         const sx = k === 0 ? 0 : Math.cos(k / 8 * 6.2832) * 14;
         const sz = k === 0 ? 0 : Math.sin(k / 8 * 6.2832) * 14;
         const hh = terrain.heightAt(p.x + sx, p.z + sz);
         gy = Math.max(gy, hh); gyMin = Math.min(gyMin, hh);
+        gyMinRaw = Math.min(gyMinRaw, hh);
       }
       gy = Math.max(0, gy); gyMin = Math.max(0, gyMin);
-      if (gy - gyMin > 1.2) {
-        const platH = gy - gyMin + 1.2;
+      /* 与 place() 同一套限制：抬升最多比中心点高 6m，否则山脚的小祠会被抬到山顶上悬空 */
+      const hC = terrain.heightAt(p.x, p.z);
+      if (gy > hC + 6) gy = Math.max(1.0, hC + 6);
+      if (gy - gyMin > 0.6) {
+        const platH = (gyMinRaw < 0.3)
+          ? Math.max(gy - gyMin + 1.2, gy + 2.6)     // 临水：台基沉到水面以下
+          : (gy - gyMin + 1.2);
         const plat = new THREE.Mesh(new THREE.BoxGeometry(32, platH, 32), m.stone);
         plat.position.set(0, -platH / 2 + 0.6, 0);
         g.add(plat);
@@ -809,27 +815,87 @@ window.Landmarks = (function () {
     const root = new THREE.Group();
     L.group = root; L.list = []; L.obstacles = [];
 
+    /* 湖心质心：判断"哪个方向是岸"的基准 */
+    let _cx = 0, _cz = 0;
+    if (course.center && course.center.length) {
+      for (const p of course.center) { _cx += p[0]; _cz += p[1]; }
+      _cx /= course.center.length; _cz /= course.center.length;
+    }
+
     function place(name, obj, opt) {
       opt = opt || {};
       const lm = byName[name];
       if (!lm) return null;
+
+      /* 显式指定坐标（个别数据点漂到湖心、需要放回它真正所在的山/岸时用） */
+      if (opt.at) { lm.x = opt.at[0]; lm.z = opt.at[1]; }
+
+      /* --- 落位纠偏：景点坐标落在湖面时，整组建筑会漂在水上 ---
+         原逻辑把地形高度 Math.max(0, …) 钳到 0，水下 -4.5 变成 0，
+         建筑就贴在水平面上、周围全是水（曲院风荷、保俶塔都这样）。
+         这里先按"远离湖心"的方向找最近的岸线；实在找不到（窄堤之类）再原地垫石台。 */
+      let shorePlat = false;
+      if (opt.y === undefined && !opt.at && terrain.heightAt(lm.x, lm.z) < 0.9) {
+        /* 12 个方向扫最近岸线（不限"远离湖心"——苏堤这类窄堤就在侧边，只朝外找会跳过它）。
+           优先要"又近又平"的岸：山顶上的点虽然也是陆地，但落差大，台基会做成一座高台。
+           先找 1.2~4.5m 的平缓岸边，实在没有才退而求其次。 */
+        const scan = hi => {
+          let best = null, bd = 1e9;
+          for (let k = 0; k < 12; k++) {
+            const a = k / 12 * Math.PI * 2;
+            const ux = Math.cos(a), uz = Math.sin(a);
+            for (let r = 6; r <= 200; r += 6) {
+              if (r >= bd) break;
+              const qx = lm.x + ux * r, qz = lm.z + uz * r;
+              const hh = terrain.heightAt(qx, qz);
+              if (hh > 1.2 && hh < hi) {
+                if (r < bd) { bd = r; best = [qx, qz]; }
+                break;
+              }
+            }
+          }
+          return best;
+        };
+        const found = scan(4.5) || scan(1e9);
+        if (found) { lm.x = found[0]; lm.z = found[1]; }
+        else shorePlat = true;                 // 四周皆水：垫一座水中石台
+      }
+
       let gy, gyMin = 1e9;
       if (opt.y !== undefined) gy = opt.y;
-      else {
+      else if (shorePlat) {
+        /* 原地垫台：从湖底一直砌到水面以上，建筑站在台顶，不再是"浮在水面" */
+        const fw = opt.foot !== undefined ? opt.foot : Math.min(30, Math.max(6, (lm.r || 20) * 0.28));
+        const platH = 8.0;
+        const plat = new THREE.Mesh(new THREE.BoxGeometry(fw * 2.2, platH, fw * 2.2), Buildings.mats().stone);
+        plat.position.set(0, -platH / 2 + 1.0, 0);
+        obj.add(plat);
+        gy = 1.0;
+      } else {
         // 大建筑取 footprint 多点采样的最高地面：宁嵌入坡体，不悬空（防坡地错位）
         const fr = opt.foot !== undefined ? opt.foot : Math.min(30, Math.max(6, (lm.r || 20) * 0.28));
         gy = 0;
+        let gyMinRaw = 1e9;
         for (let k = 0; k < 9; k++) {
           const sx = k === 0 ? 0 : Math.cos(k / 8 * 6.2832) * fr;
           const sz = k === 0 ? 0 : Math.sin(k / 8 * 6.2832) * fr;
           const hh = terrain.heightAt(lm.x + sx, lm.z + sz);
           gy = Math.max(gy, hh);
-          gyMin = Math.min(gyMin, hh);
+          gyMinRaw = Math.min(gyMinRaw, hh);
         }
-        gy = Math.max(0, gy); gyMin = Math.max(0, gyMin);
-        // 坡地落差大时垫石砌台基（依山台地做法），杜绝视觉悬空
-        if (gy - gyMin > 1.2) {
-          const platH = gy - gyMin + 1.2;
+        gy = Math.max(0, gy); gyMin = Math.max(0, gyMinRaw);
+        /* 抬升上限：footprint 取最大值，是为了坡地上一侧不悬空；
+           但山坡景点会被整体抬到山顶，中心点反而悬在几十米高空（郭庄差 32m）。
+           限制最多比中心点高 6m——多一点就让它嵌进坡里，靠台基遮，比浮在半空强。 */
+        const hCenter = terrain.heightAt(lm.x, lm.z);
+        if (gy > hCenter + 6) gy = Math.max(1.0, hCenter + 6);
+        /* 坡地/临岸落差大时垫石砌台基（依山台地做法）。
+           只有 footprint 里真的碰到水面，台基才需要一直沉到水下——
+           否则山上的塔会算出一座 80 多米高的石塔套在塔外面。 */
+        if (gy - gyMin > 0.6) {
+          const platH = (gyMinRaw < 0.3)
+            ? Math.max(gy - gyMin + 1.2, gy + 2.6)
+            : (gy - gyMin + 1.2);
           const plat = new THREE.Mesh(new THREE.BoxGeometry(fr * 2.3, platH, fr * 2.3), Buildings.mats().stone);
           plat.position.set(0, -platH / 2 + 0.6, 0);
           obj.add(plat);
@@ -853,11 +919,13 @@ window.Landmarks = (function () {
     /* 2. 断桥残雪（石碑，桥本体在六桥段） */
     place('断桥残雪', B.stele('断桥残雪'), { y: 1.78, hy: 12, visitR: 160 });
 
-    /* 3. 保俶塔：宝石山巅七级砖塔（放大） */
+    /* 3. 保俶塔：宝石山巅七级砖塔（放大）
+       原数据坐标 (-10,-1636) 落在湖心里，塔直接从水面升起。
+       这里锚到宝石山脊 (-300,-1772, 地形约 80m)，才是它真实所在的位置。 */
     place('保俶塔', B.pagoda({
       tiers: 7, baseR: 5.4, tierHs: [8.4, 7.9, 7.4, 7.2, 7.0, 6.6, 6.4],
       shrink: 0.92, plain: true, bodyMat: m.brick, finialH: 8.0
-    }), { hy: 70, visitR: 360, enlarged: true });
+    }), { at: [-300, -1772], foot: 9, hy: 70, visitR: 360, enlarged: true });
 
     /* 4. 平湖秋月：临水平台 + 八角亭 */
     const ph = new THREE.Group();
@@ -880,14 +948,21 @@ window.Landmarks = (function () {
     const qy = new THREE.Group();
     qy.add(B.pavilion({ w: 5.2, h: 3.8, sides: 4, plaque: '曲院风荷' }));
     const qh = B.hall({ w: 11, d: 7.5, h: 4.6 });
-    qh.position.set(11, 0, -5); qh.rotation.y = 0.5; qy.add(qh);
-    place('曲院风荷', qy, { hy: 12 });
+    qh.position.set(11, 0, -5); qh.rotation.y = 0.5;
+    /* 辅厅离开主亭 12m，place() 只按主建筑 footprint 定一次地面高度，
+       坡地上辅厅必然一边悬空一边嵌进土里。给它自带一块向下埋 3.6m 的石基，
+       无论落在坡的哪一侧都能踩实。 */
+    const qhb = new THREE.Mesh(new THREE.BoxGeometry(12.6, 3.8, 9.2), m.stone);
+    qhb.position.set(11, -1.7, -5);
+    qy.add(qhb);
+    qy.add(qh);
+    place('曲院风荷', qy, { hy: 12, foot: 14 });
 
-    /* 7. 苏堤春晓：堤上亭 + 碑 */
+    /* 7. 苏堤春晓：堤上亭 + 碑（坐标落在堤西侧水面，交给 place 的落位纠偏贴回堤顶） */
     const sd = new THREE.Group();
     sd.add(B.pavilion({ w: 4.4, h: 3.4, sides: 4 }));
     const sdSt = B.stele('苏堤春晓'); sdSt.position.set(5.5, 0, 1.5); sd.add(sdSt);
-    place('苏堤春晓', sd, { y: 1.78, hy: 11, visitR: 170 });
+    place('苏堤春晓', sd, { foot: 8, hy: 11, visitR: 170 });
 
     /* 8. 郭庄：白墙 + 门楼 */
     const gz = new THREE.Group();
