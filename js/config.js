@@ -82,14 +82,27 @@ window.CFG = {
     width: 2.2
   },
 
-  nitro: {
-    tank: 1.0,
-    burn: 2.8,
-    regen: 7.0,
-    start: 0.08,
-    relock: 0.25,
-    kick: 4.5,
-    fovKick: 12
+  /* 三档速度：Shift 循环切换（1 慢 / 2 快 / 3 自动巡航）
+     一档略低于原 W 速度（54），二档 = 原 W+Shift（82），三档沿环线自动驾驶 */
+  gears: {
+    slow: 46,
+    fast: 82,
+    cruiseSlow: 46,
+    cruiseFast: 82,
+    accelSlow: 14,
+    accelFast: 27,
+    lookAhead: 1.55,        // 巡航前视距离 = 速度 × 此系数（米）
+    lookMin: 26,
+    lookMax: 130,
+    cruiseTurn: 2.05,       // 巡航转向增益
+    interp: 0.35             // 换档后动力爬升的平滑时间（秒）
+  },
+
+  /* 碰撞：低于阈值只做弹性反弹（不算事故，不惊呼不翻船），撞墙同理 */
+  collision: {
+    threshold: 19,          // m/s（≈68 km/h）
+    bounce: 0.36,           // 弹性回弹系数
+    bumpCool: 0.45
   },
 
   traffic: {
@@ -110,13 +123,13 @@ window.CFG = {
   quality: {
     tiers: [
       { name: 'cpu', dpr: 0.75, terrain: 128, trees: 180, treeNear: 40, reflect: false, shadow: false, rain: 600, mist: 1, ai: 2, patchSeg: 48, aniso: 1,
-        birds: { egret: 0, swallow: 4, duck: 0 }, figures: { boat: 1, walk: 14, visitPerMark: 4, armFrame: 4 }, villages: 26 },
+        birds: { egret: 0, swallow: 4, duck: 0 }, figures: { boat: 1, walk: 14, visitPerMark: 4, armFrame: 4 }, villages: 26, waterside: 60 },
       { name: 'low', dpr: 1.00, terrain: 192, trees: 500, treeNear: 120, reflect: false, shadow: false, rain: 1500, mist: 2, ai: 4, patchSeg: 64, aniso: 2,
-        birds: { egret: 2, swallow: 8, duck: 6 }, figures: { boat: 2, walk: 42, visitPerMark: 7, armFrame: 3 }, villages: 44 },
+        birds: { egret: 2, swallow: 8, duck: 6 }, figures: { boat: 2, walk: 42, visitPerMark: 7, armFrame: 3 }, villages: 44, waterside: 110 },
       { name: 'mid', dpr: 1.25, terrain: 224, trees: 750, treeNear: 260, reflect: true, shadow: false, rain: 3000, mist: 4, ai: 6, patchSeg: 80, aniso: 4,
-        birds: { egret: 3, swallow: 12, duck: 12 }, figures: { boat: 3, walk: 72, visitPerMark: 10, armFrame: 2 }, villages: 64 },
+        birds: { egret: 3, swallow: 12, duck: 12 }, figures: { boat: 3, walk: 72, visitPerMark: 10, armFrame: 2 }, villages: 64, waterside: 165 },
       { name: 'high', dpr: 1.50, terrain: 256, trees: 1000, treeNear: 400, reflect: true, shadow: true, rain: 5000, mist: 6, ai: 8, patchSeg: 96, aniso: 8,
-        birds: { egret: 5, swallow: 16, duck: 18 }, figures: { boat: 4, walk: 110, visitPerMark: 14, armFrame: 1 }, villages: 84 }
+        birds: { egret: 5, swallow: 16, duck: 18 }, figures: { boat: 4, walk: 110, visitPerMark: 14, armFrame: 1 }, villages: 84, waterside: 200 }
     ]
   }
 };

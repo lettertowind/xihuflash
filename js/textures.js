@@ -476,19 +476,79 @@ window.Textures = (function () {
   }
 
   /* ---------- 建筑立面 ---------- */
+  /* ---------- 古风格扇窗（万字纹 / 冰纹，木框 + 暖纸窗） ---------- */
   function makeWindows() {
-    const S = 256, c = UTIL.canvas(S, S), g = c.getContext('2d');
-    g.fillStyle = '#6b767c';
-    g.fillRect(0, 0, S, S);
-    const cw = 18, ch = 22;
-    for (let y = 6; y < S; y += ch) {
-      for (let x = 6; x < S; x += cw) {
-        const lit = R() < 0.16;
-        g.fillStyle = lit ? 'rgba(255,206,148,.75)' : 'rgba(40,50,56,.55)';
-        g.fillRect(x, y, cw - 6, ch - 8);
-        g.strokeStyle = 'rgba(20,26,30,.4)';
-        g.strokeRect(x, y, cw - 6, ch - 8);
+    const S = 512, c = UTIL.canvas(S, S), g = c.getContext('2d');
+    // 暖纸窗底
+    const grd = g.createLinearGradient(0, 0, 0, S);
+    grd.addColorStop(0, '#e8d9b8'); grd.addColorStop(1, '#cdbb92');
+    g.fillStyle = grd; g.fillRect(0, 0, S, S);
+    // 两扇格扇（左右各一），四周木框
+    const frame = '#4a3520';
+    g.fillStyle = frame;
+    g.fillRect(0, 0, S, 14); g.fillRect(0, S - 14, S, 14);
+    g.fillRect(0, 0, 14, S); g.fillRect(S - 14, 0, 14, S);
+    g.fillRect(S / 2 - 7, 0, 14, S);                        // 中缝
+    // 格心：万字纹（回环方格）
+    const cw = S / 2;
+    const cell = 42;
+    g.strokeStyle = '#5a4228'; g.lineWidth = 5; g.lineCap = 'square';
+    for (let yy = 26; yy < S - 26; yy += cell) {
+      for (let xx = 26; xx < S - 26; xx += cell) {
+        // 万字节：外框 + 内十字回纹
+        g.strokeRect(xx, yy, cell - 6, cell - 6);
+        g.beginPath();
+        g.moveTo(xx + (cell - 6) / 2, yy); g.lineTo(xx + (cell - 6) / 2, yy + cell - 6);
+        g.moveTo(xx, yy + (cell - 6) / 2); g.lineTo(xx + cell - 6, yy + (cell - 6) / 2);
+        g.stroke();
       }
+    }
+    // 绦环板（上下素板 + 细雕线）
+    g.fillStyle = '#5a4228';
+    g.fillRect(14, 14, S - 28, 10); g.fillRect(14, S - 24, S - 28, 10);
+    // 岁月斑驳
+    for (let i = 0; i < 40; i++) {
+      g.fillStyle = 'rgba(70,52,30,' + (0.04 + R() * 0.08) + ')';
+      g.fillRect(R() * S, R() * S, 4 + R() * 26, 3 + R() * 14);
+    }
+    return c;
+  }
+
+  /* ---------- 冰纹窗（不规则冰裂格心） ---------- */
+  function makeIceLattice() {
+    const S = 256, c = UTIL.canvas(S, S), g = c.getContext('2d');
+    g.fillStyle = '#d8c9a4'; g.fillRect(0, 0, S, S);
+    g.strokeStyle = '#4a3520'; g.lineWidth = 4; g.strokeRect(4, 4, S - 8, S - 8);
+    g.lineWidth = 2.6;
+    // 随机三角网冰裂
+    const pts = [[8, 8], [S - 8, 8], [S - 8, S - 8], [8, S - 8]];
+    for (let i = 0; i < 14; i++) pts.push([14 + R() * (S - 28), 14 + R() * (S - 28)]);
+    for (let i = 0; i < pts.length; i++) {
+      let best1 = -1, best2 = -1, d1 = 1e9, d2 = 1e9;
+      for (let j = 0; j < pts.length; j++) {
+        if (i === j) continue;
+        const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+        if (d < d1) { d2 = d1; best2 = best1; d1 = d; best1 = j; }
+        else if (d < d2) { d2 = d; best2 = j; }
+      }
+      for (const j of [best1, best2]) {
+        if (j < 0 || j < i) continue;
+        g.beginPath(); g.moveTo(pts[i][0], pts[i][1]); g.lineTo(pts[j][0], pts[j][1]); g.stroke();
+      }
+    }
+    return c;
+  }
+
+  /* ---------- 市集棚布（靛蓝白条，做旧） ---------- */
+  function makeAwning() {
+    const S = 256, c = UTIL.canvas(S, S), g = c.getContext('2d');
+    for (let x = 0; x < S; x += 32) {
+      g.fillStyle = x % 64 === 0 ? '#3d5a72' : '#e2ddcd';
+      g.fillRect(x, 0, 32, S);
+    }
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle = 'rgba(60,55,40,' + (0.03 + R() * 0.07) + ')';
+      g.fillRect(R() * S, R() * S, 2 + R() * 18, 2 + R() * 8);
     }
     return c;
   }
@@ -556,7 +616,9 @@ window.Textures = (function () {
       case 'mist': return get('mist', () => UTIL.tex(makeMist(), { wrap: 'clamp', aniso: 2 }));
       case 'rain': return get('rain', () => UTIL.tex(makeRain(), { wrap: 'clamp', aniso: 1 }));
       case 'blob': return get('blob', () => UTIL.tex(makeBlob(), { wrap: 'clamp', aniso: 1 }));
-      case 'windows': return get('windows', () => UTIL.tex(makeWindows(), { repeat: [2, 2], aniso: 2 }));
+      case 'windows': return get('windows', () => UTIL.tex(makeWindows(), { repeat: [1, 1], aniso: 4 }));
+      case 'icelattice': return get('icelattice', () => UTIL.tex(makeIceLattice(), { repeat: [1, 1], aniso: 2 }));
+      case 'awning': return get('awning', () => UTIL.tex(makeAwning(), { repeat: [2, 1], aniso: 2 }));
       case 'bark': return get('bark', () => UTIL.tex(makeBark(), { repeat: [1, 1], aniso: 4 }));
       default: return null;
     }

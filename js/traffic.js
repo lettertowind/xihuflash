@@ -201,21 +201,29 @@ window.Traffic = (function () {
       }
       // 与玩家碰撞
       if (dP < b.r + 2.7 && !b.dead) {
+        const COL = CFG.collision;
         const nx = (player.x - b.x) / (dP || 1), nz = (player.z - b.z) / (dP || 1);
         const push = (b.r + 2.7 - dP);
         player.x += nx * push * 0.85;
         player.z += nz * push * 0.85;
         // 速度损失与转向偏移
-        const relHead = Math.abs(((player.heading - Math.atan2(player.z - b.z, player.x - b.x)) % Math.PI) - Math.PI / 2);
         const relSp = Math.abs(player.speed);
-        const damp = 0.25 + 0.4 * Math.min(1, relSp / 40);
-        player.speed *= (1 - damp * 0.75);
-        if (player.hitCool <= 0) {
-          player.collisions++;
-          player.hitCool = 0.5;
-          if (relSp > 13) {
-            /* 高速撞击：主船剧烈震颤，对方夸张飞出倾覆沉没 + 惊呼 */
-            player.shake = Math.min(1.7, player.shake + 0.9 + relSp * 0.016);
+        if (relSp < COL.threshold) {
+          /* 未达速度阈值：只做弹性碰撞（弹开 + 轻响），不算事故、不惊呼、不翻船 */
+          player.speed = -player.speed * COL.bounce;
+          if (player.hitCool <= 0) {
+            player.hitCool = COL.bumpCool;
+            if (window.Boat && Boat.bounce) Boat.bounce(Math.min(1, relSp / COL.threshold));
+          }
+        } else {
+          const damp = 0.25 + 0.4 * Math.min(1, relSp / 40);
+          player.speed *= (1 - damp * 0.75);
+          if (player.hitCool <= 0) {
+            player.collisions++;
+            player.hitCool = 0.5;
+            const hitK = UTIL.clamp(relSp / 45, 0.12, 1.4);
+            /* 高速撞击：主船大幅震颤（可能翻船），对方夸张飞出倾覆沉没 + 惊呼 */
+            if (window.Boat && Boat.impact) Boat.impact(hitK); else player.shake = Math.min(1.7, player.shake + 0.9);
             impact = 1;
             if (!b.static) {
               b.dead = true; b.deadT = 0; b.deadRoll = 0; b.sinkY = 0;
@@ -224,10 +232,6 @@ window.Traffic = (function () {
               b.rollV = (Math.random() < 0.5 ? -1 : 1) * (1.5 + Math.random() * 1.2);
               b.yawSpin = (Math.random() - 0.5) * 3.2;
             }
-            try { AudioFX.scream(Math.random() < 0.5); } catch (e) { }
-          } else {
-            player.shake = Math.min(1, player.shake + 0.65);
-            impact = Math.max(impact, damp);
           }
         }
         if (!b.static && b.speed && !b.dead) b.t = (b.t - Math.sign(b.dir) * 0.0015 + 1) % 1;

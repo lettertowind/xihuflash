@@ -44,10 +44,18 @@
   #mini .cap { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: .12em; opacity: .5; margin-top: 5px; }
 
   #speedbox { position: absolute; right: 26px; bottom: 26px; text-align: right; }
+  #gear { display: inline-block; margin-bottom: 9px; }
+  .gchip { display: inline-block; padding: 4px 12px 5px; border-radius: 999px; font-size: 10px; letter-spacing: .26em;
+    background: rgba(16,24,24,.42); border: 1px solid rgba(214,226,218,.18); color: #dff0e8; backdrop-filter: blur(8px); }
+  .gchip.g1 { color: #a8e8dc; border-color: rgba(120,220,200,.42); }
+  .gchip.g2 { color: #ffd48a; border-color: rgba(255,190,90,.55); background: rgba(58,40,16,.45); }
+  .gchip.g3 { color: #cfc0ff; border-color: rgba(172,152,255,.55); background: rgba(36,30,62,.48); }
+  .gchip.pop { animation: gp .52s ease-out; }
+  @keyframes gp { 0% { transform: scale(.82); opacity: .25; } 58% { transform: scale(1.09); opacity: 1; } 100% { transform: scale(1); } }
   #speedval { font-family: "DIN Alternate", "Bahnschrift", monospace; font-size: 60px; font-weight: 700; line-height: .92; letter-spacing: -.02em; text-shadow: 0 4px 24px rgba(0,0,0,.35); }
   #speedunit { font-size: 10.5px; letter-spacing: .3em; opacity: .6; margin-top: 2px; }
   #boostwrap { margin-top: 10px; width: 168px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.16); overflow: hidden; margin-left: auto; transition: box-shadow .2s; }
-  #boostwrap.boosting { box-shadow: 0 0 16px rgba(255,190,80,.75); }
+  #boostwrap.hot { box-shadow: 0 0 16px rgba(255,190,80,.75); }
   #boostfill { height: 100%; width: 0%; background: linear-gradient(90deg, #3f9fb4, #63ccc0); transition: width .08s linear; }
   #boostlabel { font-size: 9px; letter-spacing: .3em; opacity: .5; margin-top: 5px; }
 
@@ -94,8 +102,10 @@
     background: radial-gradient(120% 90% at 50% 40%, rgba(16,24,24,.28), rgba(10,16,16,.84));
     transition: opacity .5s ease;
   }
-  #start.hide, #result.hide { opacity: 0; pointer-events: none; }
-  .panel { width: min(720px, 90vw); text-align: center; }
+  #start.hide, #result.hide { opacity: 0; pointer-events: none; visibility: hidden; transition: opacity .5s ease, visibility 0s .5s; }
+  /* 隐藏后必须连子元素的可点性一并关闭，否则屏幕中央的隐形按钮会拦截点击 */
+  #start.hide *, #result.hide * { pointer-events: none !important; }
+  .panel { width: min(720px, 90vw); max-height: 94vh; overflow-y: auto; padding: 6px 10px; text-align: center; }
   .panel .kicker { font-size: 10.5px; letter-spacing: .55em; opacity: .5; text-transform: uppercase; }
   .panel h1 { margin: 14px 0 6px; font-family: "Songti SC", "SimSun", serif; font-weight: 500; font-size: clamp(38px, 6vw, 66px); letter-spacing: .18em; }
   .panel h1 em { font-style: normal; color: #a8d0c0; }
@@ -105,6 +115,7 @@
   .stat b { display: block; font-family: "DIN Alternate", monospace; font-size: 25px; font-weight: 600; letter-spacing: .02em; }
   .stat span { display: block; font-size: 9.5px; letter-spacing: .2em; opacity: .5; margin-top: 5px; }
   .keys { display: flex; gap: 9px; justify-content: center; flex-wrap: wrap; margin-bottom: 30px; font-size: 11.5px; opacity: .72; }
+  .keys.touchkeys { display: none; }
   .keys i { font-style: normal; padding: 5px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; letter-spacing: .08em; }
   .btn {
     pointer-events: auto; display: inline-flex; align-items: center; gap: 12px; cursor: pointer;
@@ -121,6 +132,7 @@
   #result .time { font-family: "DIN Alternate", monospace; font-size: clamp(50px, 8vw, 78px); font-weight: 700; letter-spacing: -.02em; margin: 6px 0 0; }
   .newbest { color: #ffd23c; font-size: 11px; letter-spacing: .24em; height: 15px; margin-top: 6px; }
   .resultstats { display: flex; justify-content: center; gap: 34px; margin: 20px 0 26px; }
+  .backrow { margin-top: 14px; }
   #result .stat b { font-size: 21px; }
   #result .stat span { opacity: .62; }
 
@@ -163,7 +175,8 @@
     background: rgba(255,255,255,.07); display: flex; align-items: center; justify-content: center; font-size: 12px; letter-spacing: .14em;
     touch-action: none; -webkit-tap-highlight-color: transparent; user-select: none; }
   .pedal.on { background: rgba(168,208,192,.35); border-color: rgba(168,208,192,.7); }
-  .pedal.boost { border-color: rgba(255,196,110,.5); color: #ffe0b0; }
+  .pedal.gear { border-color: rgba(196,176,255,.55); color: #d8ccff; }
+  .pedal.gear.on { background: rgba(170,150,255,.35); border-color: rgba(190,172,255,.85); }
   #touchhint { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 10px; letter-spacing: .18em; opacity: .35; }
   #scene { touch-action: none; -webkit-tap-highlight-color: transparent; }
   body.touch #hint { display: none; }
@@ -174,6 +187,97 @@
     #compass { display: none; } #visit { left: 14px; top: 64px; }
     #hint { display: none; }
     #timer { top: 12px; } #mini { top: 12px; right: 12px; }
+  }
+
+  /* ---------------- 手机 / 矮屏适配（开始按钮必须始终可见可点） ---------------- */
+  @media (max-height: 640px) {
+    .panel h1 { font-size: clamp(26px, 5vh, 40px); margin: 8px 0 4px; }
+    .panel .sub { font-size: 11px; line-height: 1.7; }
+    .stats { margin: 14px 0 12px; gap: 22px; }
+    .keys { margin-bottom: 14px; gap: 6px; } .keys i { padding: 3px 7px; font-size: 10px; }
+    .btn { padding: 12px 34px; }
+    #result .panel { padding: 18px 22px 16px; }
+    #result .time { font-size: 44px; }
+    .resultstats { margin: 12px 0 14px; }
+  }
+  @media (pointer: coarse) {
+    .btn { padding: 17px 52px; font-size: 16px; }   /* 更大触控目标 */
+    .btn.ghost { padding: 15px 36px; }
+  }
+  /* 触屏模式：重排 HUD 避让摇杆/踏板 */
+  body.touch #speedbox { right: 50%; transform: translateX(50%); bottom: calc(12px + env(safe-area-inset-bottom)); }
+  body.touch #boostwrap { width: 118px; margin-top: 7px; }
+  body.touch #speedval { font-size: 38px; }
+  body.touch #gear { margin-bottom: 6px; }
+  body.touch #mute { left: 14px; top: 110px; bottom: auto; }
+  body.touch #mini { width: 92px; padding: 5px; }
+  body.touch #minimap { width: 82px; height: 82px; }
+  body.touch #touchhint { display: none; }
+  /* 触屏没有 Shift 键，档位说明换成换档踏板 */
+  body.touch #boostlabel { font-size: 0; letter-spacing: 0; }
+  body.touch #boostlabel::after { content: "档位 · 换档键"; font-size: 9px; letter-spacing: .26em; }
+  /* 键盘按键说明对触屏用户没有意义，换成手势说明 */
+  body.touch .keys.keyboard { display: none; }
+  body.touch .keys.touchkeys { display: flex; }
+  /* 覆盖层（开始/结算）打开时隐藏触控件，避免遮挡按钮；仅进入游戏后才显示 */
+  body.uiopen #touch { display: none; }
+  body.touch:not(.playing) #touch { display: none; }
+  body.uiopen #mute { bottom: 24px; top: auto; }
+  /* 结算/开始面板打开时 HUD 让位，只留音效开关（手机没有 M 键，这个必须能点） */
+  body.uiopen #scrim, body.uiopen #timer, body.uiopen #visit, body.uiopen #compass,
+  body.uiopen #mini, body.uiopen #speedbox, body.uiopen #hint, body.uiopen #labels {
+    opacity: 0; transition: opacity .3s ease; pointer-events: none;
+  }
+
+  /* ---------------- 竖屏（用户点"仍然继续"后）：底部被摇杆+踏板占满，速度挪到左侧腰部 ---------------- */
+  @media (orientation: portrait) and (max-width: 560px) {
+    body.touch #speedbox { left: 14px; right: auto; transform: none; top: 50%; bottom: auto; text-align: left; }
+    body.touch #speedval { font-size: 32px; }
+    body.touch #speedunit { font-size: 9px; }
+    body.touch #boostwrap { width: 92px; margin-left: 0; margin-top: 7px; }
+    body.touch #gear { margin-bottom: 5px; }
+    #visit { left: 14px; }
+    body.touch #mini { width: 84px; padding: 5px; }
+    body.touch #minimap { width: 74px; height: 74px; }
+  }
+
+  /* ---------------- 手机横屏（矮屏）：所有触控件与 HUD 都缩一档 ---------------- */
+  @media (max-height: 500px) {
+    /* 速度改成一行横排——竖排会整块压住船头，横屏高度只剩 390，不能让 HUD 吃掉 1/4 画面 */
+    body.touch #speedbox { right: 50%; transform: translateX(50%); bottom: calc(4px + env(safe-area-inset-bottom));
+      display: flex; align-items: baseline; gap: 8px; }
+    body.touch #gear { margin: 0 0 0 0; align-self: center; }
+    body.touch #speedval { font-size: 26px; line-height: 1; }
+    body.touch #speedunit { font-size: 9px; margin: 0; }
+    body.touch #boostwrap { display: none; }
+    body.touch #boostlabel { display: none; }
+    #stick { width: 100px; height: 100px; bottom: calc(56px + env(safe-area-inset-bottom)); }
+    #stick .knob { width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+    #pedals { bottom: calc(74px + env(safe-area-inset-bottom)); gap: 10px; }
+    .pedal { width: 72px; height: 72px; font-size: 11px; }
+    #timer .t { font-size: 20px; }
+    #timer { top: 10px; }
+    #visit { font-size: 10px; padding: 8px 12px; top: 10px; }
+    body.touch #mini { width: 82px; padding: 4px; top: 8px; right: 8px; }
+    body.touch #minimap { width: 74px; height: 74px; }
+    body.touch #mini .cap { font-size: 8px; margin-top: 3px; }
+    #toast { top: 15%; }
+    #toastTitle { font-size: 22px; }
+    #toastSub { font-size: 10px; margin-top: 4px; }
+    .lm .card { padding: 6px 10px 7px; min-width: 94px; }
+    .lm .n { font-size: 13px; }
+    .lm .d { font-size: 9px; }
+    .lm .k { font-size: 8px; top: -6px; }
+    /* 结算/开始面板：横屏只有 390 高，两个按钮并排才放得下 */
+    #result .panel { padding: 16px 22px 14px; }
+    #result .time { font-size: 40px; }
+    #result .kicker { font-size: 9.5px; }
+    .resultstats { margin: 12px 0 14px; gap: 26px; }
+    #result .btn { padding: 11px 26px; font-size: 14px; display: inline-block; }
+    #result .btn.ghost { padding: 9px 20px; }
+    #result .backrow { display: inline-block; margin: 0 0 0 10px; }
+    #start .panel { padding: 4px 8px; }
+    #start .btn { margin-top: 2px; }
   }
 </style>
 </head>
@@ -191,12 +295,13 @@
       <div class="cap"><span>西湖全景</span><span>WEST LAKE</span></div>
     </div>
     <div id="speedbox">
+      <div id="gear" class="gchip g1">一档 · 慢船</div>
       <div id="speedval">0</div>
       <div id="speedunit">KM / H</div>
       <div id="boostwrap"><div id="boostfill"></div></div>
-      <div id="boostlabel">氮气 · SHIFT</div>
+      <div id="boostlabel">档位 · SHIFT</div>
     </div>
-    <div id="hint">W 油门 · S 减速 · A/D 转向<br>Shift 氮气 · 移动鼠标环视 · 右键拖动观景<br>F 结算 · R 重来</div>
+    <div id="hint">W 油门 · S 减速 · A/D 转向<br>Shift 换档（慢 / 快 / 自动巡航） · 移动鼠标环视<br>点击回正 · V 视角 · F 结算 · R 重来</div>
     <div id="wrong">方向错了 · 调头</div>
     <div id="toast"><div id="toastTitle"></div><div id="toastSub"></div></div>
     <div id="countdown"></div>
@@ -208,16 +313,19 @@
 
   <div id="start">
     <div class="panel">
-      <div class="kicker">West Lake · Hangzhou</div>
+      <div class="kicker">West Lake · Hangzhou · v1.6</div>
       <h1>西湖<em>极速</em></h1>
-      <div class="sub">烟雨江南 · 摇橹乌篷 · 环湖探访十七处胜景<br>自由探索，回到起点码头自动结算</div>
+      <div class="sub">烟雨江南 · 摇橹乌篷 · 环湖探访二十三处胜景<br>三档船速切换 · 三档自动巡航，回到起点码头自动结算</div>
       <div class="stats">
         <div class="stat"><b id="st-km">8.7</b><span>KM 湖程</span></div>
         <div class="stat"><b id="st-visit">17</b><span>处 名 胜</span></div>
         <div class="stat"><b id="st-best">—</b><span>最佳探访</span></div>
       </div>
-      <div class="keys">
-        <i>W / ↑ 油门</i><i>S / ↓ 减速</i><i>A D 转向</i><i>Shift 氮气</i><i>鼠标移动 环视</i><i>右键拖动 观景</i><i>F 结算</i><i>R 重来</i><i>M 音效</i>
+      <div class="keys keyboard">
+        <i>W / ↑ 油门</i><i>S / ↓ 减速</i><i>A D 转向</i><i>Shift 换档</i><i>鼠标移动 环视</i><i>点击 回正</i><i>V 视角</i><i>F 结算</i><i>R 重来</i><i>M 音效</i>
+      </div>
+      <div class="keys touchkeys">
+        <i>左下摇杆 转向</i><i>右下 油门</i><i>紫色键 换档</i><i>拖屏 环视</i><i>点屏 回正</i>
       </div>
       <button class="btn" id="startbtn">开 始 游 湖</button>
     </div>
@@ -235,7 +343,7 @@
         <div class="stat"><b id="rcoll">0</b><span>碰撞次数</span></div>
       </div>
       <button class="btn" id="againbtn">再 游 一 次</button>
-      <div style="margin-top:14px"><button class="btn ghost" id="backbtn">返回起点</button></div>
+      <div class="backrow"><button class="btn ghost" id="backbtn">返回起点</button></div>
     </div>
   </div>
 
@@ -243,9 +351,9 @@
     <div id="stick"><div class="knob"></div></div>
     <div id="pedals">
       <div class="pedal" id="pthrottle">油门</div>
-      <div class="pedal boost" id="pboost">氮气</div>
+      <div class="pedal gear" id="pgear">换档</div>
     </div>
-    <div id="touchhint">左侧摇杆转向 · 右侧油门 / 氮气</div>
+    <div id="touchhint">左侧摇杆转向 · 右侧油门 / 换档</div>
   </div>
 
   <div id="rotate"><div class="ic">⟳</div><div class="t">请 横 屏 游 玩</div><div class="s">ROTATE YOUR DEVICE</div><button id="rotbtn">仍 然 继 续</button></div>
@@ -282,6 +390,8 @@
 <script src="js/boat.js"></script>
 <script src="js/traffic.js"></script>
 <script src="js/birds.js"></script>
+<script src="js/scream-assets.js"></script>
+<script src="js/accel-assets.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/world.js"></script>

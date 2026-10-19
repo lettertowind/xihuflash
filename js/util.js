@@ -196,6 +196,16 @@ window.UTIL = (function () {
   U.merge = function (geoms) {
     const attr = ['position', 'normal', 'uv'];
     const out = { position: [], normal: [], uv: [] };
+    // 预扫：任一子几何带 color 顶点色则合并之（缺省填 1=白，不影响原色）
+    let useColor = false;
+    for (let gi = 0; gi < geoms.length; gi++) {
+      const g0 = geoms[gi];
+      if (!g0 || !g0.getAttribute) continue;
+      const c0 = g0.index ? g0.toNonIndexed() : g0;
+      if (c0.getAttribute('color')) { useColor = true; break; }
+    }
+    if (useColor) out.color = [];
+    const attrs = useColor ? attr.concat(['color']) : attr;
     for (let gi = 0; gi < geoms.length; gi++) {
       let g = geoms[gi];
       if (!g) continue;
@@ -203,14 +213,15 @@ window.UTIL = (function () {
       const posAttr = g.getAttribute('position');
       if (!posAttr) continue;
       const count = posAttr.count;
-      for (const k of attr) {
+      for (const k of attrs) {
         const comp = k === 'uv' ? 2 : 3;
         const a = g.getAttribute(k);
         if (a) {
           const arr = a.array;
           for (let i = 0; i < count * comp; i++) out[k].push(arr[i]);
         } else {
-          for (let i = 0; i < count * comp; i++) out[k].push(k === 'uv' ? 0 : 0);
+          const fill = k === 'uv' ? 0 : (k === 'color' ? 1 : 0);
+          for (let i = 0; i < count * comp; i++) out[k].push(fill);
         }
       }
     }
@@ -218,6 +229,7 @@ window.UTIL = (function () {
     g.setAttribute('position', new THREE.Float32BufferAttribute(out.position, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(out.normal, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(out.uv, 2));
+    if (useColor) g.setAttribute('color', new THREE.Float32BufferAttribute(out.color, 3));
     return g;
   };
 

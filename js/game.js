@@ -11,8 +11,64 @@
   try { bestVisited = parseInt(localStorage.getItem('westlake_visited_v2') || '0', 10) || 0; } catch (e) { bestVisited = 0; }
 
   const keys = {};
-  const input = { throttle: 0, steer: 0, boost: false };
-  const touch = { steer: 0, throttle: false, boost: false };
+  const input = { throttle: 0, steer: 0, cruiseFast: false };
+  const touch = { steer: 0, throttle: false };
+
+  /* ---------------- 三档速度：Shift 循环 1→2→3 ---------------- */
+  let routeIdx = 0;
+
+  /* 环线上离船最近的节点（先在上一帧位置附近开窗搜，离得太远再全量搜） */
+  function nearestRouteIdx(x, z, hint) {
+    const n = C.center.length;
+    let best = ((hint | 0) % n + n) % n, bd = Infinity;
+    for (let k = -90; k <= 90; k++) {
+      const i = ((best + k) % n + n) % n;
+      const dx = C.center[i][0] - x, dz = C.center[i][1] - z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (bd > 300 * 300) {
+      for (let i = 0; i < n; i += 2) {
+        const dx = C.center[i][0] - x, dz = C.center[i][1] - z;
+        const d = dx * dx + dz * dz;
+        if (d < bd) { bd = d; best = i; }
+      }
+    }
+    return best;
+  }
+
+  /* 自动巡航：纯追踪（pure pursuit）——朝环线前方 look 米处的点打舵 */
+  function autopilotSteer() {
+    const b = boat.state, n = C.center.length, G = CFG.gears;
+    routeIdx = nearestRouteIdx(b.x, b.z, routeIdx);
+    const sp = Math.abs(b.speed);
+    const look = clamp(sp * G.lookAhead, G.lookMin, G.lookMax);
+    let j = routeIdx, acc = 0, guard = 0;
+    while (acc < look && guard++ < 240) {
+      const k = (j + 1) % n;
+      acc += Math.hypot(C.center[k][0] - C.center[j][0], C.center[k][1] - C.center[j][1]);
+      j = k;
+    }
+    const want = Math.atan2(C.center[j][1] - b.z, C.center[j][0] - b.x);
+    let err = want - b.heading;
+    while (err > Math.PI) err -= Math.PI * 2;
+    while (err < -Math.PI) err += Math.PI * 2;
+    return { steer: clamp(err * G.cruiseTurn, -1, 1), err: Math.abs(err) };
+  }
+
+  function cycleGear(dir) {
+    if (!boat) return;
+    const g = boat.cycleGear(dir || 1);
+    HUD.setGear(g);
+    HUD.toast(Boat.gearName(g), g === 3 ? '自动沿湖航行 · 按 W 提速，再按 Shift 换档'
+      : (g === 2 ? '全速快船 · 速度与船头分水拉满' : '慢速摇橹 · 更接近真实乌篷船'));
+    if (g === 3) routeIdx = nearestRouteIdx(boat.state.x, boat.state.z, routeIdx);
+    try {
+      // 切到二档（快速档）时整段播放"加速"录音，与事故惊呼同一条语音总线、同一响度基准
+      if (g === 2) { AudioFX.accel(); AudioFX.whoosh(); }
+      AudioFX.blip(g === 3 ? 604 : (g === 2 ? 784 : 880), 0.2, 0.10);
+    } catch (e) { }
+  }
 
   const $ = id => document.getElementById(id);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -121,6 +177,7 @@
     try {
       boat = Boat.create(scene, tier);
       boat.reset(C.start.x, C.start.z, C.heading);
+      boat.setView('third');            // 菜单为第三人称环绕（可看到玩家自身建模）
     } catch (e) {
       clearTimeout(wd);
       fatal('船只初始化失败：' + (e && e.message ? e.message : e));
@@ -130,6 +187,7 @@
     HUD.init(C, Landmarks.list);
     HUD.showHUD(false);
     HUD.setMute(true);
+    HUD.setGear(1);
     try { AudioFX.setMuted(true); } catch (e) { }
     const stv = $('st-visit'); if (stv) stv.textContent = Landmarks.list.length;
     const stk = $('st-km'); if (stk) stk.textContent = (C.total / 1000).toFixed(1);
@@ -155,6 +213,7 @@
       HUD.showHUD(false);
       HUD.hideLabels();
       boat.reset(C.start.x, C.start.z, C.heading);
+      boat.setView('third');
     });
     HUD.onMute(() => {
       try {
@@ -177,6 +236,15 @@
         } catch (err) { }
       }
       if (e.code === 'Enter' && state === 'menu') startRun();
+      if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat &&
+          (state === 'cruise' || state === 'count')) {
+        e.preventDefault();
+        cycleGear(1);
+      }
+      if (e.code === 'KeyV' && (state === 'cruise' || state === 'count' || state === 'done')) {
+        const v = boat.toggleView();
+        HUD.toast(v === 'third' ? '第三人称' : '第一人称', v === 'third' ? '可看清自己的船家装扮 · 再按 V 切回' : '坐回船头 · 摇橹前行');
+      }
     });
     window.addEventListener('keyup', e => { keys[e.code] = false; });
     window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -184,15 +252,14 @@
     const rb = $('rotbtn');
     if (rb) rb.addEventListener('click', () => document.body.classList.add('rot-ok'));
 
-    /* 视角：桌面鼠标移动即环视（无需按键）+ 右键拖动粗调；触屏单指拖动转视角 */
+    /* 视角：桌面鼠标移动即环视（无需按键）；触屏单指拖动转视角 */
     const cvs = $('scene');
-    let dragging = false, lastPX = 0, lastPY = 0, touchViewId = null, tX = 0, tY = 0;
+    let lastPX = 0, lastPY = 0, touchViewId = null, tX = 0, tY = 0;
     if (cvs) {
       cvs.addEventListener('pointerdown', e => {
         if (e.pointerType === 'touch') {
           if (touchViewId === null) { touchViewId = e.pointerId; tX = e.clientX; tY = e.clientY; }
-        } else if (e.button === 2) { dragging = true; lastPX = e.clientX; lastPY = e.clientY; }
-        else if (e.button === 0) { snapBack = true; }          // 桌面：左键点击立即回正
+        } else if (e.button === 0) { snapBack = true; }        // 桌面：左键点击立即回正
       });
     }
     window.addEventListener('pointermove', e => {
@@ -208,7 +275,7 @@
         }
         return;
       }
-      // 桌面：鼠标移动即转视角（与右键拖动同向）
+      // 桌面：鼠标移动即转视角
       const dx = e.movementX !== undefined ? e.movementX : (lastPX ? e.clientX - lastPX : 0);
       const dy = e.movementY !== undefined ? e.movementY : (lastPY ? e.clientY - lastPY : 0);
       if (dx || dy) snapBack = false;
@@ -222,7 +289,6 @@
         touchViewId = null;
         snapBack = true;                                       // 手机：手指离开屏幕立即回正
       }
-      dragging = false;
     });
     window.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -257,7 +323,13 @@
       el.addEventListener('pointerleave', e => { el.classList.remove('on'); off(); });
     };
     bindPedal($('pthrottle'), () => touch.throttle = true, () => touch.throttle = false);
-    bindPedal($('pboost'), () => touch.boost = true, () => touch.boost = false);
+    const gb = $('pgear');
+    if (gb) {
+      gb.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        if (state === 'cruise' || state === 'count') cycleGear(1);
+      });
+    }
   }
 
   /* ---------------- 开始 ---------------- */
@@ -267,11 +339,14 @@
     HUD.showResult(null);
     HUD.showHUD(true);
     boat.reset(C.start.x, C.start.z, C.heading);
+    boat.setView('first');            // 进入游戏回到第一人称
     visitedCount = 0; topSpeed = 0; raceTime = 0; armed = false;
     Landmarks.list.forEach(l => { l.visited = false; });
     HUD.refreshMap();
     HUD.setTime(0);
     HUD.setVisit(0, Landmarks.list.length);
+    HUD.setGear(1);                 // 每局默认一档（慢档）
+    HUD.setSpeed(0, 0, 1);
 
     state = 'count';
     const myToken = ++raceToken;
@@ -357,31 +432,38 @@
     }
 
     if (state === 'count') {
-      boat.update(dt, { throttle: 0, steer: 0, boost: false }, Terrain.navigable);
+      boat.update(dt, { throttle: 0, steer: 0, cruiseFast: false }, Terrain.navigable);
       boat.applyCamera(camera, dt);
     }
 
     if (state === 'cruise') {
-      const kThrottle = (keys['KeyW'] || keys['ArrowUp'] || touch.throttle) ? 1 : 0;
-      const kBrake = (keys['KeyS'] || keys['ArrowDown']) ? 1 : 0;
-      const kSteer = (keys['KeyA'] || keys['ArrowLeft'] ? -1 : 0) + (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
-      input.throttle = kThrottle - kBrake * 0.5;
-      input.steer = clamp(kSteer + touch.steer, -1, 1);
-      input.boost = !!(keys['ShiftLeft'] || keys['ShiftRight'] || touch.boost);
+      const gear = boat.state.gear;
+      const wThr = !!(keys['KeyW'] || keys['ArrowUp'] || touch.throttle);
+      if (gear === 3) {
+        /* 三档：自动沿环线航行，不按 W 走慢档速度，按住 W 走快档速度 */
+        const ap = autopilotSteer();
+        input.steer = ap.steer;
+        input.throttle = ap.err > 0.85 ? 0.55 : 1;      // 大角度修正时收一点油
+        input.cruiseFast = wThr;
+      } else {
+        const kBrake = (keys['KeyS'] || keys['ArrowDown']) ? 1 : 0;
+        const kSteer = (keys['KeyA'] || keys['ArrowLeft'] ? -1 : 0) + (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
+        input.throttle = (wThr ? 1 : 0) - kBrake * 0.5;
+        input.steer = clamp(kSteer + touch.steer, -1, 1);
+        input.cruiseFast = false;
+      }
       const before = boat.state.collisions;
-      const wasBoost = boat.state.boosting;
       boat.update(dt, input, Terrain.navigable);
-      if (boat.state.collisions > before) { HUD.flash(); AudioFX.crash(); }
-      if (!wasBoost && boat.state.boosting) AudioFX.whoosh();
+      if (boat.state.collisions > before) { HUD.flash(); }   // 音效由 Boat.impact 统一触发
       boat.applyCamera(camera, dt);
 
       raceTime = (now - t0) / 1000;
       if (boat.state.speed > topSpeed) topSpeed = boat.state.speed;
-      AudioFX.setSpeed(Math.abs(boat.state.speed) * 3.6, boat.state.boosting);
+      AudioFX.setSpeed(Math.abs(boat.state.speed) * 3.6, boat.state.fovK);
 
       // 交通船 + 碰撞
       const impact = Traffic.update(dt, boat.state, world.obstacles);
-      if (impact > 0) { HUD.flash(); AudioFX.crash(); }
+      if (impact > 0) { HUD.flash(); }
 
       // 探访景点
       const b = boat.state;
@@ -410,14 +492,15 @@
       }
 
       HUD.setTime(raceTime);
-      HUD.setSpeed(Math.abs(b.speed) * 3.6, b.tank, b.boosting);
+      HUD.setSpeed(Math.abs(b.speed) * 3.6, b.fovK, b.gear);
+      HUD.setGear(b.gear);
       HUD.setCompass(b.heading);
     }
 
     if (state === 'done') {
-      boat.update(dt, { throttle: 0, steer: 0, boost: false }, Terrain.navigable);
+      boat.update(dt, { throttle: 0, steer: 0, cruiseFast: false }, Terrain.navigable);
       boat.applyCamera(camera, dt);
-      HUD.setSpeed(Math.abs(boat.state.speed) * 3.6, boat.state.tank, false);
+      HUD.setSpeed(Math.abs(boat.state.speed) * 3.6, boat.state.fovK, boat.state.gear);
     }
 
     // 水面倒影与天气
@@ -430,7 +513,14 @@
       HUD.updateLabels(camera, dt);
       HUD.updateToast(dt);
     }
-    if (boat) HUD.drawMinimap({ x: boat.state.x, z: boat.state.z, heading: boat.state.heading }, Traffic.list(), world.dock);
+    if (boat) HUD.drawMinimap({ x: boat.state.x, z: boat.state.z, heading: boat.state.heading }, [], world.dock,
+      { gear: boat.state.gear, t: now / 1000 });
+
+    if (camLock) {                       // 固定机位覆盖（调试）
+      camera.fov = camLock.fov; camera.updateProjectionMatrix();
+      camera.position.set(camLock.p[0], camLock.p[1], camLock.p[2]);
+      camera.lookAt(camLock.t[0], camLock.t[1], camLock.t[2]);
+    }
 
     renderer.render(scene, camera);
 
@@ -444,12 +534,17 @@
   }
 
   /* ---------------- 调试 ---------------- */
+  let camLock = null;              // 固定机位（验收截图用）
+  window.__cam = function (px, py, pz, tx, ty, tz, fov) {
+    camLock = { p: [px, py, pz], t: [tx, ty, tz], fov: fov || 60 };
+  };
+  window.__camOff = function () { camLock = null; };
   window.__teleport = function (s) {
     let i = 0; while (i < C.cum.length - 1 && C.cum[i] < s) i++;
     const j = Math.min(C.center.length - 1, i + 10);
     boat.state.x = C.center[i][0]; boat.state.z = C.center[i][1];
     boat.state.heading = Math.atan2(C.center[j][1] - C.center[i][1], C.center[j][0] - C.center[i][0]);
-    boat.state.speed = 30; boat.state.tank = 1;
+    boat.state.speed = 30;
     boat.state.wakeHist.length = 0;
     boat.group.position.set(boat.state.x, 0, boat.state.z);
     boat.group.rotation.set(0, -boat.state.heading, 0);

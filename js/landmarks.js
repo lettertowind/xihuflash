@@ -128,7 +128,21 @@ window.Landmarks = (function () {
       const p = findShore(terrain, ex.anchor[0], ex.anchor[1], 6, 30);
       if (!p) continue;
       const g = buildExtra(ex.kind, ex.name, m);
-      const gy = Math.max(0, terrain.heightAt(p.x, p.z));
+      // 大建筑多点采样取最高地面，防坡地悬空；落差大时垫石砌台基
+      let gy = 0, gyMin = 1e9;
+      for (let k = 0; k < 9; k++) {
+        const sx = k === 0 ? 0 : Math.cos(k / 8 * 6.2832) * 14;
+        const sz = k === 0 ? 0 : Math.sin(k / 8 * 6.2832) * 14;
+        const hh = terrain.heightAt(p.x + sx, p.z + sz);
+        gy = Math.max(gy, hh); gyMin = Math.min(gyMin, hh);
+      }
+      gy = Math.max(0, gy); gyMin = Math.max(0, gyMin);
+      if (gy - gyMin > 1.2) {
+        const platH = gy - gyMin + 1.2;
+        const plat = new THREE.Mesh(new THREE.BoxGeometry(32, platH, 32), m.stone);
+        plat.position.set(0, -platH / 2 + 0.6, 0);
+        g.add(plat);
+      }
       const n = shoreNormal(terrain, p.x, p.z);
       g.position.set(p.x, gy, p.z);
       g.rotation.y = Math.atan2(n[0], n[1]) + (UTIL.rng((p.x * 7 + p.z) | 0)() - 0.5) * 0.5;
@@ -140,6 +154,16 @@ window.Landmarks = (function () {
       added++;
     }
     return added;
+  }
+
+  /* footprint 避让：中心 + 8 向外沿都不得压堤（防村舍/商铺穿堤穿桥） */
+  function clearSpot(terrain, x, z, r) {
+    if (terrain.onCauseway(x, z)) return false;
+    for (let k = 0; k < 8; k++) {
+      const a = k / 8 * 6.2832;
+      if (terrain.onCauseway(x + Math.cos(a) * r, z + Math.sin(a) * r)) return false;
+    }
+    return true;
   }
 
   /* ---------------- 沿湖民居（白墙黛瓦衬托） ---------------- */
@@ -164,10 +188,10 @@ window.Landmarks = (function () {
       const x = p[0] + bn[0] * off, z = p[1] + bn[1] * off;
       if (terrain.exactShoreDist(x, z) < 16) continue;
       const gy = terrain.heightAt(x, z);
-      if (gy > 30 || gy < 1.0 || terrain.onCauseway(x, z)) continue;
+      if (gy > 30 || gy < 1.0 || !clearSpot(terrain, x, z, 8)) continue;
       let ok = true;
       for (const lm of L.list) if (Math.hypot(x - lm.x, z - lm.z) < 42) { ok = false; break; }
-      if (ok) for (const br of course.bridges) if (Math.hypot(x - br.x, z - br.z) < br.r + 22) { ok = false; break; }
+      if (ok) for (const br of course.bridges) if (Math.hypot(x - br.x, z - br.z) < br.r + 26) { ok = false; break; }
       if (ok && L.dock && Math.hypot(x - L.dock.x, z - L.dock.z) < 60) ok = false;
       if (ok) for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 34) { ok = false; break; }
       if (!ok) continue;
@@ -202,12 +226,36 @@ window.Landmarks = (function () {
   }
 
   /* ---------------- 合批民居 / 沿街商铺 / 旗杆（InstancedMesh，控 draw call） ---------------- */
+  /* 马头墙 / 观音兜轮廓（Extrude：白墙正面 + 黛瓦压顶侧边） */
+  function gableGeo(style, rr) {
+    const shape = new THREE.Shape();
+    if (style === 'guanyin') {
+      shape.moveTo(0, 0); shape.lineTo(0, 2.6);
+      shape.quadraticCurveTo(1.4, 3.4, 2.8, 1.7);
+      shape.lineTo(2.8, 0);
+    } else {
+      shape.moveTo(0, 0); shape.lineTo(0, 2.7); shape.lineTo(0.5, 2.7);
+      shape.lineTo(0.5, 3.5); shape.lineTo(1.1, 3.5);
+      shape.lineTo(1.1, 4.3); shape.lineTo(1.6, 4.3);
+      shape.lineTo(1.6, 3.5); shape.lineTo(2.2, 3.5);
+      shape.lineTo(2.2, 2.7); shape.lineTo(2.7, 2.7);
+      shape.lineTo(2.7, 0);
+    }
+    shape.lineTo(0, 0);
+    const g = new THREE.ExtrudeGeometry(shape, { depth: 0.55, bevelEnabled: false });
+    g.translate(-1.35, 0, -0.28);
+    return g;
+  }
+
   function houseGeos() {
     const bodyA = new THREE.BoxGeometry(4.6, 3.0, 3.6); bodyA.translate(0, 1.5, 0);
     const bodyB = new THREE.BoxGeometry(5.8, 3.6, 4.4); bodyB.translate(0, 1.8, 0);
-    const roof = new THREE.ConeGeometry(3.3, 1.35, 4);
-    roof.rotateY(Math.PI / 4); roof.scale(1.25, 1, 0.85); roof.translate(0, 4.1, 0);
-    return { bodyA, bodyB, roof };
+    const roofA = Buildings.roofGableGeo(4.6, 3.6, 1.35, 0.62); roofA.translate(0, 3.0, 0);
+    const roofB = Buildings.roofGableGeo(5.8, 4.4, 1.6, 0.72); roofB.translate(0, 3.6, 0);
+    const gable = gableGeo('matou');
+    const win = new THREE.PlaneGeometry(1.7, 1.15);
+    const door = new THREE.PlaneGeometry(1.25, 1.95);
+    return { bodyA, bodyB, roofA, roofB, gable, win, door };
   }
 
   function buildInstHouses(list) {
@@ -218,9 +266,14 @@ window.Landmarks = (function () {
     const n = list.length;
     const imA = new THREE.InstancedMesh(g.bodyA, m.plaster, n);
     const imB = new THREE.InstancedMesh(g.bodyB, m.brick, Math.ceil(n / 2));
-    const imR = new THREE.InstancedMesh(g.roof, m.roof, n);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p3 = new THREE.Vector3(), s3 = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), e = new THREE.Euler();
-    let nb = 0;
+    const imRA = new THREE.InstancedMesh(g.roofA, m.roof, n);
+    const imRB = new THREE.InstancedMesh(g.roofB, m.roof, Math.ceil(n / 2));
+    const imG = new THREE.InstancedMesh(g.gable, [m.plaster, m.roofDark], n);
+    const imW = new THREE.InstancedMesh(g.win, m.window, n);
+    const imD = new THREE.InstancedMesh(g.door, m.woodDark, n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p3 = new THREE.Vector3(), s3 = new THREE.Vector3(), e = new THREE.Euler();
+    const loc = new THREE.Matrix4(), out = new THREE.Matrix4();
+    let ia = 0, ib = 0;
     for (let i = 0; i < n; i++) {
       const s = list[i];
       const rot = rr() * Math.PI * 2;
@@ -229,14 +282,261 @@ window.Landmarks = (function () {
       const sc = 0.9 + rr() * 0.5;
       s3.set(sc, sc, sc);
       m4.compose(p3, q, s3);
-      if (i % 2 === 0) imA.setMatrixAt(i, m4); else { imB.setMatrixAt(nb++, m4); s3.set(sc * 1.1, sc, sc * 1.1); m4.compose(p3, q, s3); }
-      imR.setMatrixAt(i, m4);
+      const isB = i % 2 === 1;
+      if (isB) { imB.setMatrixAt(ib, m4); imRB.setMatrixAt(ib, m4); ib++; }
+      else { imA.setMatrixAt(ia, m4); imRA.setMatrixAt(ia, m4); ia++; }
+      imG.setMatrixAt(i, m4);
+      // 格扇窗：正面两扇
+      loc.makeTranslation(0, 1.7, (isB ? 2.24 : 1.84));
+      out.multiplyMatrices(m4, loc); imW.setMatrixAt(i, out);
+      // 石库门（暗色双扇）：正面中央
+      loc.makeTranslation(0, 0.98, (isB ? 2.26 : 1.86));
+      out.multiplyMatrices(m4, loc); imD.setMatrixAt(i, out);
     }
-    imB.count = nb;
-    [imA, imB, imR].forEach(im => { im.frustumCulled = false; L.group.add(im); });
+    imA.count = ia; imRA.count = ia; imB.count = ib; imRB.count = ib;
+    [imA, imB, imRA, imRB, imG, imW, imD].forEach(im => { im.frustumCulled = false; L.group.add(im); });
   }
 
-  /* 沿街商铺：北山街 + 南山路两段弧 */
+  /* ---------------- 水路两侧人家：临水民居带（合批）+ 檐下灯笼指路 ----------------
+     沿水域环线连续排布，正面朝水，檐口挂灯；夜间灯笼自发光 + 加色光晕连成两条灯链，
+     既符合江南水乡实景，也给夜航指明航道边界。 */
+  const ROUTE = { lan: [], glow: null, mat: null, pts: null, halo: null, haloMat: null };
+  L.routeLanterns = [];
+
+  const G0W = 5.4, G0D = 4.2, G0H = 3.05;      // 临水民居基准尺寸（落位采样用）
+
+  function watersideGeos() {
+    const w = G0W, d = G0D, h = G0H;
+    const body = new THREE.BoxGeometry(w, h, d); body.translate(0, h / 2, 0);
+    const roof = Buildings.roofGableGeo(w, d, 1.42, 0.76); roof.translate(0, h, 0);
+    const gable = gableGeo('matou');                                   // 高约 4.3，宽 2.7
+    const win = new THREE.PlaneGeometry(1.5, 1.05);
+    const door = new THREE.PlaneGeometry(1.15, 1.9);
+    const lanGeo = new THREE.SphereGeometry(0.26, 10, 8); lanGeo.scale(1, 1.2, 1);
+    const capGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.05, 7);
+    // 正脊瓦：屋脊上通长一道深色压条，两端略翘——江南民居的轮廓辨识度主要靠它
+    const ridgeGeo = new THREE.BoxGeometry(w + 1.5, 0.13, 0.3); ridgeGeo.translate(0, h + 1.44, 0);
+    const ridgeEndGeo = new THREE.BoxGeometry(0.34, 0.5, 0.34); ridgeEndGeo.translate(0, h + 1.66, 0);
+    // 石砌墙基：顶面与墙体底面齐平，向下延伸 3.4m 埋进坡地，坡地落差由它填实
+    const baseGeo = new THREE.BoxGeometry(w + 0.7, 3.4, d + 0.7);
+    baseGeo.translate(0, -1.7, 0);
+    return { w, d, h, body, roof, gable, win, door, lanGeo, capGeo, baseGeo, ridgeGeo, ridgeEndGeo };
+  }
+
+  function buildWaterside(course, terrain, tier) {
+    const B = Buildings, m = B.mats();
+    const cap = (tier && tier.waterside) || 190;
+    const rr = UTIL.rng(778899);
+    const ring = course.water;
+    const spots = [];
+    const avoid = [];
+    L.list.forEach(l => avoid.push({ x: l.x, z: l.z, r: 40 }));
+    (course.shopSpots || []).forEach(s => avoid.push({ x: s.x, z: s.z, r: 15 }));
+    let acc = 0;
+    for (let i = 2; i < ring.length && spots.length < cap; i++) {
+      const p = ring[i], p2 = ring[i + 1 < ring.length ? i + 1 : 0];
+      const dx = p2[0] - p[0], dz = p2[1] - p[1], dl = Math.hypot(dx, dz) || 1;
+      acc += dl;
+      if (acc < 26) continue;
+      acc = 0;
+      if (rr() < 0.18) continue;                                        // 留出空档（园林/山脚）
+      const nx = -dz / dl, nz = dx / dl;
+      const sgn = terrain.shoreDist(p[0] + nx * 6, p[1] + nz * 6) > terrain.shoreDist(p[0] - nx * 6, p[1] - nz * 6) ? 1 : -1;
+      const off = 9 + rr() * 12;                                        // 距水边 9~21m，檐口临水
+      const x = p[0] + nx * sgn * off, z = p[1] + nz * sgn * off;
+      const sd = terrain.exactShoreDist(x, z);
+      if (sd < 5 || sd > 42) continue;
+      if (terrain.onCauseway(x, z) || !clearSpot(terrain, x, z, 6)) continue;
+      const gy0 = terrain.heightAt(x, z);
+      if (gy0 < 1.0 || gy0 > 20) continue;
+      // 正面（局部 +Z）朝水
+      const yaw = Math.atan2(-nx * sgn, -nz * sgn);
+      /* 台基落位：房子不能再"用中心点高度拍上去"（坡地会半悬空）。
+         取 footprint 9 点地形高度：以中心高度落位，下坡侧由石砌台基填到地面，
+         上坡侧允许埋进坡体。两侧落差都超过台基深度才放弃。 */
+      const cs = Math.cos(yaw), sn = Math.sin(yaw);
+      const hw = G0W / 2, hd = G0D / 2;
+      let hmin = gy0, hmax = gy0;
+      for (let k = 0; k < 9; k++) {
+        const lx = ((k % 3) - 1) * hw, lz = (((k / 3) | 0) - 1) * hd;
+        const hh = terrain.heightAt(x + lx * cs + lz * sn, z - lx * sn + lz * cs);
+        if (hh < hmin) hmin = hh;
+        if (hh > hmax) hmax = hh;
+      }
+      if (gy0 - hmin > 2.3 || hmax - gy0 > 2.3) continue;               // 台基/埋深兜不住
+      const gy = gy0;
+      let ok = true;
+      for (const a of avoid) if (Math.hypot(x - a.x, z - a.z) < a.r) { ok = false; break; }
+      if (ok) for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 12.5) { ok = false; break; }
+      if (!ok) continue;
+      spots.push({
+        x, z, gy, yaw, sd,
+        sc: 0.86 + rr() * 0.42,
+        tall: 0.92 + rr() * 0.3,
+        brick: rr() < 0.35
+      });
+    }
+    if (!spots.length) return 0;
+
+    const G = watersideGeos();
+    const n = spots.length;
+    const imBody = new THREE.InstancedMesh(G.body, m.plaster, n);
+    const imBody2 = new THREE.InstancedMesh(G.body, m.brick, n);
+    const imRoof = new THREE.InstancedMesh(G.roof, m.roof, n);
+    const imGable = new THREE.InstancedMesh(G.gable, [m.plaster, m.roofDark], n * 2);
+    const imWin = new THREE.InstancedMesh(G.win, m.window, n * 2);
+    const imDoor = new THREE.InstancedMesh(G.door, m.woodDark, n);
+    const imBase = new THREE.InstancedMesh(G.baseGeo, m.stone, n);
+    const imLan = new THREE.InstancedMesh(G.lanGeo, m.nightLantern, n * 3);
+    const imCap = new THREE.InstancedMesh(G.capGeo, m.dark, n * 3);
+    const imRidge = new THREE.InstancedMesh(G.ridgeGeo, m.roofDark, n);
+    const imRidgeEnd = new THREE.InstancedMesh(G.ridgeEndGeo, m.roofDark, n * 2);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p3 = new THREE.Vector3(), s3 = new THREE.Vector3(), e = new THREE.Euler();
+    const loc = new THREE.Matrix4(), out = new THREE.Matrix4();
+    let iA = 0, iB = 0;
+    const lanPos = [];
+    for (let i = 0; i < n; i++) {
+      const s = spots[i];
+      e.set(0, s.yaw, 0); q.setFromEuler(e);
+      p3.set(s.x, Math.max(0.6, s.gy) - 0.10, s.z);
+      s3.set(s.sc, s.sc * s.tall, s.sc);
+      m4.compose(p3, q, s3);
+      imRoof.setMatrixAt(i, m4);
+      imBase.setMatrixAt(i, m4);
+      imRidge.setMatrixAt(i, m4);
+      for (let k = 0; k < 2; k++) {
+        loc.makeTranslation((k ? 1 : -1) * (G.w + 1.5) / 2, 0, 0);
+        out.multiplyMatrices(m4, loc);
+        imRidgeEnd.setMatrixAt(i * 2 + k, out);
+      }
+      if (s.brick) imBody2.setMatrixAt(iB++, m4); else imBody.setMatrixAt(iA++, m4);
+      // 两端马头墙（旋转 90° 使其横跨进深方向）
+      for (let k = 0; k < 2; k++) {
+        loc.makeTranslation((k ? 1 : -1) * (G.w / 2 + 0.08) * s.sc, 0, 0);
+        out.multiplyMatrices(m4, loc);
+        const gq = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, s.yaw + Math.PI / 2, 0));
+        const gs = new THREE.Vector3((G.d + 1.4) / 2.7, (G.h + 1.5) / 4.3, 1);
+        const gm = new THREE.Matrix4().compose(
+          new THREE.Vector3(out.elements[12], out.elements[13], out.elements[14]), gq, gs);
+        imGable.setMatrixAt(i * 2 + k, gm);
+      }
+      // 临水格扇窗 + 石库门
+      for (let k = 0; k < 2; k++) {
+        loc.makeTranslation((k ? 1 : -1) * 1.45 * s.sc, 1.72 * s.tall * s.sc, (G.d / 2 + 0.03) * s.sc);
+        out.multiplyMatrices(m4, loc); imWin.setMatrixAt(i * 2 + k, out);
+      }
+      loc.makeTranslation(0, 0.96 * s.tall * s.sc, (G.d / 2 + 0.05) * s.sc);
+      out.multiplyMatrices(m4, loc); imDoor.setMatrixAt(i, out);
+      // 檐下三盏灯笼（正面两盏 + 侧面一盏）：夜里成串发亮
+      const lant = [[-1.8, G.h - 0.1, G.d / 2 + 0.5], [1.8, G.h - 0.1, G.d / 2 + 0.5], [G.w / 2 + 0.4, G.h - 0.1, -0.6]];
+      for (let k = 0; k < 3; k++) {
+        loc.makeTranslation(lant[k][0] * s.sc, lant[k][1] * s.tall * s.sc, lant[k][2] * s.sc);
+        out.multiplyMatrices(m4, loc);
+        imLan.setMatrixAt(i * 3 + k, out);
+        loc.makeTranslation(lant[k][0] * s.sc, (lant[k][1] + 0.2) * s.tall * s.sc, lant[k][2] * s.sc);
+        out.multiplyMatrices(m4, loc);
+        imCap.setMatrixAt(i * 3 + k, out);
+        lanPos.push({ x: out.elements[12], y: out.elements[13] + 0.2, z: out.elements[14] });
+      }
+    }
+    imBody.count = iA; imBody2.count = iB;
+    [imBody, imBody2, imRoof, imGable, imWin, imDoor, imLan, imCap, imBase, imRidge, imRidgeEnd].forEach(im => {
+      im.frustumCulled = false; L.group.add(im);
+    });
+    L.waterside = spots;
+
+    /* ---- 灯杆补空：民居稀疏处立杆挂灯，保证整条航线两侧灯链不断 ---- */
+    const rr2 = UTIL.rng(246810);
+    const poles = [];
+    for (let i = 0; i < ring.length; i += 3) {
+      const p = ring[i], p2 = ring[(i + 3) % ring.length];
+      const dx = p2[0] - p[0], dz = p2[1] - p[1], dl = Math.hypot(dx, dz) || 1;
+      const nx = -dz / dl, nz = dx / dl;
+      const sgn = terrain.shoreDist(p[0] + nx * 6, p[1] + nz * 6) > terrain.shoreDist(p[0] - nx * 6, p[1] - nz * 6) ? 1 : -1;
+      const off = 5 + rr2() * 4;
+      const x = p[0] + nx * sgn * off, z = p[1] + nz * sgn * off;
+      const sd = terrain.exactShoreDist(x, z);
+      if (sd < 1.5 || sd > 16) continue;
+      if (terrain.onCauseway(x, z)) continue;
+      let near = false;
+      for (const lp of lanPos) {
+        const ddx = lp.x - x, ddz = lp.z - z;
+        if (ddx * ddx + ddz * ddz < 46 * 46) { near = true; break; }
+      }
+      if (near) continue;
+      for (const pp of poles) if (Math.hypot(x - pp.x, z - pp.z) < 40) { near = true; break; }
+      if (near) continue;
+      poles.push({ x, z, gy: terrain.heightAt(x, z) });
+      if (poles.length >= 90) break;
+    }
+    if (poles.length) {
+      const postGeo = new THREE.CylinderGeometry(0.06, 0.09, 3.1, 6); postGeo.translate(0, 1.55, 0);
+      const armGeo = new THREE.BoxGeometry(1.5, 0.09, 0.09); armGeo.translate(0.6, 3.0, 0);
+      const imPost = new THREE.InstancedMesh(postGeo, m.woodDark, poles.length);
+      const imArm = new THREE.InstancedMesh(armGeo, m.woodDark, poles.length);
+      const imLan2 = new THREE.InstancedMesh(G.lanGeo, m.nightLantern, poles.length);
+      const m5 = new THREE.Matrix4();
+      const lq = new THREE.Quaternion();
+      for (let i = 0; i < poles.length; i++) {
+        const pp = poles[i];
+        m5.compose(new THREE.Vector3(pp.x, Math.max(0.6, pp.gy) - 0.1, pp.z), lq, new THREE.Vector3(1, 1, 1));
+        imPost.setMatrixAt(i, m5);
+        imArm.setMatrixAt(i, m5);
+        m5.compose(new THREE.Vector3(pp.x + 1.15, Math.max(0.6, pp.gy) + 2.72, pp.z), lq, new THREE.Vector3(1.15, 1.15, 1.15));
+        imLan2.setMatrixAt(i, m5);
+        lanPos.push({ x: pp.x + 1.15, y: Math.max(0.6, pp.gy) + 2.9, z: pp.z });
+      }
+      [imPost, imArm, imLan2].forEach(im => { im.frustumCulled = false; L.group.add(im); });
+    }
+
+    L.routeLanterns = lanPos;
+    buildLanternGlow(lanPos);
+    return spots.length;
+  }
+
+  /* 灯笼光晕：两层 Points（亮核 + 大范围晕圈，加色混合）。
+     关键点：fog:false —— 否则远处灯笼会被雨雾色吞掉，夜航看不到灯链。
+     深度测试保留，山体/民居挡住的灯笼不会穿透显示。零额外光源。 */
+  function buildLanternGlow(list) {
+    if (!list.length) return;
+    const N = list.length;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { pos[i * 3] = list[i].x; pos[i * 3 + 1] = list[i].y; pos[i * 3 + 2] = list[i].z; }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const tex = glowTexture();
+    const mk = (size, color, order) => {
+      const mat = new THREE.PointsMaterial({
+        map: tex, size, sizeAttenuation: true, transparent: true,
+        depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0,
+        color, fog: false
+      });
+      const pts = new THREE.Points(g, mat);
+      pts.frustumCulled = false;
+      pts.renderOrder = order;
+      L.group.add(pts);
+      return { pts, mat };
+    };
+    const core = mk(4.6, 0xffe2b4, 6);
+    const halo = mk(15.5, 0xffa855, 5);
+    ROUTE.glow = core.pts; ROUTE.mat = core.mat;
+    ROUTE.halo = halo.pts; ROUTE.haloMat = halo.mat;
+  }
+
+  let _glowTex = null;
+  function glowTexture() {
+    if (_glowTex) return _glowTex;
+    const c = UTIL.canvas(64, 64), g = c.getContext('2d');
+    const gr = g.createRadialGradient(32, 32, 1, 32, 32, 31);
+    gr.addColorStop(0, 'rgba(255,225,175,0.95)');
+    gr.addColorStop(0.28, 'rgba(255,178,92,0.42)');
+    gr.addColorStop(1, 'rgba(255,120,40,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    _glowTex = new THREE.CanvasTexture(c);
+    return _glowTex;
+  }
+
+  /* ---------------- 沿街商铺：北山街 + 南山路两段弧 ---------------- */
   L.planWaterfront = function (course, terrain) {
     if (course.shopSpots) return course.shopSpots;
     const spots = [];
@@ -272,7 +572,7 @@ window.Landmarks = (function () {
         const sd = terrain.exactShoreDist(x, z);
         if (sd < 4 || sd > 18) continue;
         const gy = terrain.heightAt(x, z);
-        if (gy < 1.2 || gy > 25 || terrain.onCauseway(x, z)) continue;
+        if (gy < 1.2 || gy > 25 || !clearSpot(terrain, x, z, 5)) continue;
         let ok = true;
         for (const lm of course.landmarks) if (Math.hypot(x - lm.x, z - lm.z) < 26) { ok = false; break; }
         if (ok && course.start && Math.hypot(x - course.start.x, z - course.start.z) < 45) ok = false;
@@ -292,14 +592,25 @@ window.Landmarks = (function () {
     const m = Buildings.mats();
     const g = houseGeos();
     const n = spots.length;
-    const bodyIM = new THREE.InstancedMesh(g.bodyA, m.plaster, n);
-    const roofIM = new THREE.InstancedMesh(g.roof, m.roof, n);
+    const bodyIM = new THREE.InstancedMesh(g.bodyB, m.plaster, n);
+    const roofIM = new THREE.InstancedMesh(g.roofB, m.roof, n);
+    const gableIM = new THREE.InstancedMesh(g.gable, [m.plaster, m.roofDark], n);
+    const winIM = new THREE.InstancedMesh(g.win, m.window, n * 2);
+    // 夜市灯笼（挑檐下双灯，随 lampK 亮）
+    const lanGeo = new THREE.SphereGeometry(0.19, 10, 8); lanGeo.scale(1, 1.25, 1);
+    const lanIM = new THREE.InstancedMesh(lanGeo, m.nightLantern, n * 2);
+    // 闹市摊棚（条纹棚布 + 摊桌）
+    const awnGeo = new THREE.PlaneGeometry(3.4, 2.2); awnGeo.rotateX(-Math.PI / 2 + 0.28); awnGeo.translate(0, 2.9, 2.0);
+    const awnIM = new THREE.InstancedMesh(awnGeo, m.awning, n);
+    const tableGeo = new THREE.BoxGeometry(1.7, 0.78, 0.9); tableGeo.translate(0, 0.39, 0);
+    const tableIM = new THREE.InstancedMesh(tableGeo, m.woodDark, n);
     const poleGeo = new THREE.CylinderGeometry(0.045, 0.06, 3.4, 5); poleGeo.translate(0, 1.7, 0);
     const poleIM = new THREE.InstancedMesh(poleGeo, m.dark, n);
     const flagGeo = new THREE.PlaneGeometry(0.55, 1.7); flagGeo.translate(0.28, 0, 0); flagGeo.translate(0, 2.4, 0);
     const flagMat = new THREE.MeshLambertMaterial({ color: 0xd8a23c, side: THREE.DoubleSide });
     const flagIM = new THREE.InstancedMesh(flagGeo, flagMat, n);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p3 = new THREE.Vector3(), s3 = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), e = new THREE.Euler();
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p3 = new THREE.Vector3(), s3 = new THREE.Vector3(), e = new THREE.Euler();
+    const loc = new THREE.Matrix4(), out = new THREE.Matrix4();
     for (let i = 0; i < n; i++) {
       const s = spots[i];
       e.set(0, s.yaw, 0); q.setFromEuler(e);
@@ -309,15 +620,31 @@ window.Landmarks = (function () {
       m4.compose(p3, q, s3);
       bodyIM.setMatrixAt(i, m4);
       roofIM.setMatrixAt(i, m4);
+      gableIM.setMatrixAt(i, m4);
+      // 临街格扇窗 ×2
+      for (let k = 0; k < 2; k++) {
+        loc.makeTranslation(k ? 1.35 : -1.35, 2.05, 2.26);
+        out.multiplyMatrices(m4, loc);
+        winIM.setMatrixAt(i * 2 + k, out);
+        // 挑檐灯笼 ×2
+        loc.makeTranslation(k ? 1.9 : -1.9, 3.15, 2.1);
+        out.multiplyMatrices(m4, loc);
+        lanIM.setMatrixAt(i * 2 + k, out);
+      }
+      // 门前摊棚与摊桌（闹市）
+      loc.makeTranslation(0, 0, 3.4);
+      out.multiplyMatrices(m4, loc); awnIM.setMatrixAt(i, out);
+      loc.makeTranslation((rr() - 0.5) * 1.6, 0, 3.2);
+      out.multiplyMatrices(m4, loc); tableIM.setMatrixAt(i, out);
       // 幌杆立在店侧
-      const px = s.x + Math.cos(s.yaw) * 0, pz = s.z + Math.sin(s.yaw) * 0;
-      p3.set(px + Math.cos(s.yaw + 1.57) * 2.6, Math.max(0.5, s.gy) - 0.1, pz + Math.sin(s.yaw + 1.57) * 2.6);
+      p3.set(s.x + Math.cos(s.yaw) * 0, s.z + Math.sin(s.yaw) * 0, 0);
+      p3.set(s.x + Math.cos(s.yaw + 1.57) * 2.6, Math.max(0.5, s.gy) - 0.1, s.z + Math.sin(s.yaw + 1.57) * 2.6);
       s3.set(1, 1, 1);
       m4.compose(p3, q, s3);
       poleIM.setMatrixAt(i, m4);
       flagIM.setMatrixAt(i, m4);
     }
-    [bodyIM, roofIM, poleIM, flagIM].forEach(im => { im.frustumCulled = false; L.group.add(im); });
+    [bodyIM, roofIM, gableIM, winIM, lanIM, awnIM, tableIM, poleIM, flagIM].forEach(im => { im.frustumCulled = false; L.group.add(im); });
   }
 
   /* 放大景旗杆（杏黄三角旗，合批 2 IM） */
@@ -425,6 +752,26 @@ window.Landmarks = (function () {
   }
 
   L.update = function (dt) {
+    /* 夜市/闹市氛围：环境亮度低 → 灯笼与暖窗点亮（夜市），白天全灭（闹市靠棚布旗幌） */
+    if (window.Weather && Weather.lampK) {
+      const lampK = Weather.lampK();
+      const m = Buildings.mats();
+      const flick = 0.92 + 0.08 * Math.sin(performance.now() * 0.006);
+      const k = lampK * flick;
+      m.nightLantern.emissiveIntensity = k * 2.2;
+      m.window.emissiveIntensity = k * 0.75;
+      m.latticeIce.emissiveIntensity = k * 0.55;
+      /* 水路两侧灯笼光晕：入夜渐亮，形成指引航线的一条条灯链 */
+      if (ROUTE.mat) {
+        const pulse = 0.88 + 0.12 * Math.sin(performance.now() * 0.004);
+        ROUTE.mat.opacity = lampK * 0.95 * pulse;
+        ROUTE.mat.size = 4.2 + lampK * 2.2;
+      }
+      if (ROUTE.haloMat) {
+        ROUTE.haloMat.opacity = lampK * 0.34;
+        ROUTE.haloMat.size = 13.5 + lampK * 7.5;
+      }
+    }
     if (!visitorMesh || !visitorData.length) return;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s3 = new THREE.Vector3(), p3 = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
@@ -466,7 +813,28 @@ window.Landmarks = (function () {
       opt = opt || {};
       const lm = byName[name];
       if (!lm) return null;
-      const gy = opt.y !== undefined ? opt.y : Math.max(0, terrain.heightAt(lm.x, lm.z));
+      let gy, gyMin = 1e9;
+      if (opt.y !== undefined) gy = opt.y;
+      else {
+        // 大建筑取 footprint 多点采样的最高地面：宁嵌入坡体，不悬空（防坡地错位）
+        const fr = opt.foot !== undefined ? opt.foot : Math.min(30, Math.max(6, (lm.r || 20) * 0.28));
+        gy = 0;
+        for (let k = 0; k < 9; k++) {
+          const sx = k === 0 ? 0 : Math.cos(k / 8 * 6.2832) * fr;
+          const sz = k === 0 ? 0 : Math.sin(k / 8 * 6.2832) * fr;
+          const hh = terrain.heightAt(lm.x + sx, lm.z + sz);
+          gy = Math.max(gy, hh);
+          gyMin = Math.min(gyMin, hh);
+        }
+        gy = Math.max(0, gy); gyMin = Math.max(0, gyMin);
+        // 坡地落差大时垫石砌台基（依山台地做法），杜绝视觉悬空
+        if (gy - gyMin > 1.2) {
+          const platH = gy - gyMin + 1.2;
+          const plat = new THREE.Mesh(new THREE.BoxGeometry(fr * 2.3, platH, fr * 2.3), Buildings.mats().stone);
+          plat.position.set(0, -platH / 2 + 0.6, 0);
+          obj.add(plat);
+        }
+      }
       obj.position.set(lm.x, gy, lm.z);
       if (opt.rotY) obj.rotation.y = opt.rotY;
       root.add(obj);
@@ -623,35 +991,89 @@ window.Landmarks = (function () {
     groups['苏堤'].sort((a, b) => a.br.z - b.br.z);
     groups['杨公堤'].sort((a, b) => a.br.z - b.br.z);
 
+    /* 堤身半宽（与 Terrain 里的 HALF 一致），桥宽取其两倍：桥面恰与堤面等宽 */
+    const CW_HALF = { '苏堤': 9.5, '杨公堤': 11, '白堤': 9.5 };
+    window.__BRIDGES = [];
+
     function buildBridge(item, name, opt) {
       opt = opt || {};
-      const br = item.br, seg = item.nc.seg || [[0, 0], [1, 0]];
-      const dx = seg[1][0] - seg[0][0], dz = seg[1][1] - seg[0][1];
-      const len = Math.hypot(dx, dz) || 1;
-      const px = -dz / len, pz = dx / len;              // 垂直于堤 = 桥轴
-      const span = UTIL.clamp(br.r * 1.35, 15, 30);
-      const g = B.archBridge({
-        span, width: opt.width || 12,
-        rise: opt.rise !== undefined ? opt.rise : Math.min(5.5, span * 0.24),
-        plaque: name
-      });
-      g.position.set(br.x, opt.y !== undefined ? opt.y : 0.22, br.z);
+      const br = item.br;
+      // 去重：数据里过近的重复桥只建一座（防拱桥重叠错位）
+      if (!buildBridge._built) buildBridge._built = [];
+      for (const pb of buildBridge._built) {
+        if (Math.hypot(br.x - pb.x, br.z - pb.z) < 40) return;
+      }
+      buildBridge._built.push({ x: br.x, z: br.z });
+      /* 收集全部堤线端点（含朝向线内的方向）——桥跨在堤断口上，桥轴 = 断口两端连线 */
+      const ends = [];
+      for (const nm in course.causeways) {
+        for (const line of course.causeways[nm]) {
+          if (!line || line.length < 2) continue;
+          const n = line.length;
+          ends.push({ x: line[0][0], z: line[0][1], dx: line[1][0] - line[0][0], dz: line[1][1] - line[0][1], line });
+          ends.push({ x: line[n - 1][0], z: line[n - 1][1], dx: line[n - 2][0] - line[n - 1][0], dz: line[n - 2][1] - line[n - 1][1], line });
+        }
+      }
+      const near = ends.map(e => ({ e, d: Math.hypot(e.x - br.x, e.z - br.z) }))
+        .filter(o => o.d < 60).sort((a, b) => a.d - b.d);
+      /* 注意：这里的断口端点命名用 eA / eB，切勿用 A / B —— 会遮蔽外层的 Buildings 别名 B */
+      let eA = null, eB = null;
+      if (near.length >= 2) {
+        outer:
+        for (let i = 0; i < near.length; i++) {
+          for (let j = i + 1; j < near.length; j++) {
+            const ei = near[i].e, ej = near[j].e;
+            if (ei.line === ej.line) continue;
+            const mx = (ei.x + ej.x) / 2, mz = (ei.z + ej.z) / 2;
+            if (Math.hypot(br.x - mx, br.z - mz) > 40) continue;   // 桥点须在断口中间
+            eA = ei; eB = ej; break outer;
+          }
+        }
+      }
+      let px, pz, cx = br.x, cz = br.z, span;
+      if (eA && eB) {
+        const dx = eB.x - eA.x, dz = eB.z - eA.z, Lg = Math.hypot(dx, dz) || 1;
+        px = dx / Lg; pz = dz / Lg;                     // 桥跨方向 = 断口两端连线（顺堤）
+        span = UTIL.clamp(Lg, 15, 34);                  // 拱跨 = 缺口净宽，不再额外放大（防压入堤端）
+        cx = (eA.x + eB.x) / 2; cz = (eA.z + eB.z) / 2;
+      } else if (near.length >= 1) {
+        /* 堤端续接岸（如断桥：堤尽头接北山街岸） */
+        const e = near[0].e;
+        const Lg = Math.hypot(e.dx, e.dz) || 1;
+        px = -e.dx / Lg; pz = -e.dz / Lg;             // 沿堤向外延伸
+        span = UTIL.clamp(br.r * 1.5, 15, 30);
+        cx = e.x + px * (span * 0.5 - 5); cz = e.z + pz * (span * 0.5 - 5);
+      } else {
+        /* 兜底：沿最近堤段方向 */
+        const seg = item.nc.seg || [[0, 0], [1, 0]];
+        const dx = seg[1][0] - seg[0][0], dz = seg[1][1] - seg[0][1], Lg = Math.hypot(dx, dz) || 1;
+        px = dx / Lg; pz = dz / Lg;
+        span = UTIL.clamp(br.r * 1.35, 15, 30);
+      }
+      const half = opt.half !== undefined ? opt.half : (CW_HALF[item.nc.name] || 9.5);
+      const width = half * 2;                            // 桥宽 = 堤宽，隧道进深与堤身一致
+      const rise = opt.rise !== undefined ? opt.rise : Math.min(4.4, span * 0.20);
+      const g = B.archBridge({ span, width, rise, plaque: name });
+      // archBridge 桥面两端局部 y = thick(1.02) → 基座 0.80 使桥面两端与堤顶 1.78 齐平（略高 4cm 防共面闪烁）
+      g.position.set(cx, 0.80, cz);
       // local +X → (cos ry, -sin ry) 需等于 (px, pz)：ry = atan2(-pz, px)
       g.rotation.y = Math.atan2(-pz, px);
       root.add(g);
-      L.obstacles.push({ x: br.x, z: br.z, r: span * 0.22, bridge: true });
+      L.obstacles.push({ x: cx, z: cz, r: span * 0.30, bridge: true });
+      /* 供 Terrain.navigable 使用：只有拱洞正中可通过，两侧桥台/堤体不可穿 */
+      window.__BRIDGES.push({ x: cx, z: cz, ux: px, uz: pz, span, width, rise });
     }
 
     groups['苏堤'].forEach((item, i) => {
       const idx = Math.round(i * (SUDI_NAMES.length - 1) / Math.max(1, groups['苏堤'].length - 1));
-      buildBridge(item, SUDI_NAMES[idx], { width: 12 });
+      buildBridge(item, SUDI_NAMES[idx], { half: CW_HALF['苏堤'] });
     });
     groups['杨公堤'].forEach((item, i) => {
       const idx = Math.round(i * (YANG_NAMES.length - 1) / Math.max(1, groups['杨公堤'].length - 1));
-      buildBridge(item, YANG_NAMES[idx], { width: 12 });
+      buildBridge(item, YANG_NAMES[idx], { half: CW_HALF['杨公堤'] });
     });
     groups['白堤'].forEach((item, i) => {
-      buildBridge(item, i === 0 ? '断桥' : '锦带桥', { width: 14, rise: 2.4, y: 0.3 });
+      buildBridge(item, i === 0 ? '断桥' : '锦带桥', { half: CW_HALF['白堤'], rise: 2.2 });
     });
 
     /* ---------------- 起点码头（螺旋搜索陆点） ---------------- */
@@ -674,8 +1096,7 @@ window.Landmarks = (function () {
     root.add(dg);
     L.dock = { x: dock.x, z: dock.z, ry: dg.rotation.y };
 
-    /* 城市天际线（东侧远景） */
-    root.add(B.city(course));
+    /* （现代城市天际线已移除，东岸远景由民居群与塔影代替） */
 
     /* 景点照壁/景墙（照片素材展示） */
     buildPhotoWalls(course, terrain);
@@ -684,6 +1105,7 @@ window.Landmarks = (function () {
     buildExtras(course, terrain);
     buildVillages(course, terrain, tier);
     buildShops(course, terrain, tier);
+    buildWaterside(course, terrain, tier);      // 水路两侧人家 + 檐下灯笼（夜航指路）
     buildFlags(course, terrain);
 
     scene.add(root);

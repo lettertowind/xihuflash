@@ -92,22 +92,38 @@ window.HUD = (function () {
     });
 
     staticMap = c;
+    buildRoutePts();
   }
   H.refreshMap = buildStaticMap;
 
   /* ---------- 顶部信息 ---------- */
   H.setTime = t => { const el = $('tval'); if (el) el.textContent = fmt(t); };
-  H.setSpeed = (kmh, tank, boosting) => {
+
+  /* speed：km/h；heat：0..1 速度强度（驱动条长）；gear：1/2/3 */
+  H.setSpeed = (kmh, heat, gear) => {
     const el = $('speedval'); if (el) el.textContent = Math.round(kmh);
+    const h = Math.max(0, Math.min(1, heat || 0));
     const bf = $('boostfill');
     if (bf) {
-      bf.style.width = Math.round(tank * 100) + '%';
-      bf.style.background = boosting
-        ? 'linear-gradient(90deg,#ffb03c,#ffd94c)'
-        : (tank >= 0.999 ? 'linear-gradient(90deg,#5fd8c4,#a4f0e0)' : 'linear-gradient(90deg,#3f9fb4,#63ccc0)');
+      bf.style.width = Math.round(h * 100) + '%';
+      bf.style.background = gear === 3
+        ? 'linear-gradient(90deg,#8f7bff,#c7b6ff)'
+        : (gear === 2 ? 'linear-gradient(90deg,#ffb03c,#ffd94c)' : 'linear-gradient(90deg,#3f9fb4,#63ccc0)');
     }
     const bw = $('boostwrap');
-    if (bw) bw.classList.toggle('boosting', !!boosting);
+    if (bw) bw.classList.toggle('hot', h > 0.74);
+  };
+
+  /* 档位指示：1 慢 / 2 快 / 3 自动巡航 */
+  H.setGear = function (g) {
+    const el = $('gear');
+    if (el) {
+      el.textContent = g === 3 ? '三档 · 巡航' : (g === 2 ? '二档 · 快船' : '一档 · 慢船');
+      el.className = 'gchip g' + g;
+      el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    }
+    const b = document.body;
+    if (b) { b.classList.toggle('gear3', g === 3); }
   };
   H.setVisit = (n, total) => { const el = $('visit'); if (el) el.textContent = '探访 ' + n + ' / ' + total; };
   H.setCompass = h => {
@@ -122,7 +138,7 @@ window.HUD = (function () {
     f.style.opacity = '1';
     setTimeout(() => { f.style.opacity = '0'; }, 120);
   };
-  H.showHUD = on => { const el = $('hud'); if (el) el.classList.toggle('on', on); };
+  H.showHUD = on => { const el = $('hud'); if (el) el.classList.toggle('on', on); document.body.classList.toggle('playing', !!on); };
   H.hideLabels = () => labels.forEach(it => setLabel(it, false));
 
   H.countdown = txt => {
@@ -152,16 +168,17 @@ window.HUD = (function () {
   };
 
   /* ---------- 面板 ---------- */
-  H.showStart = on => { const el = $('start'); if (el) el.classList.toggle('hide', !on); };
+  H.showStart = on => { const el = $('start'); if (el) el.classList.toggle('hide', !on); document.body.classList.toggle('uiopen', !!on); };
   H.showResult = function (data) {
     const el = $('result'); if (!el) return;
-    if (!data) { el.classList.add('hide'); return; }
+    if (!data) { el.classList.add('hide'); document.body.classList.remove('uiopen'); return; }
     $('rtime').textContent = fmt(data.time);
     $('rvisit').textContent = data.visited + ' / ' + data.total;
     $('rdist').textContent = (data.distance / 1000).toFixed(2) + ' km';
     $('rtop').textContent = Math.round(data.top * 3.6) + ' km/h';
     $('rcoll').textContent = data.collisions;
     el.classList.remove('hide');
+    document.body.classList.add('uiopen');
   };
 
   /* ---------- 地标浮标 ---------- */
@@ -182,7 +199,10 @@ window.HUD = (function () {
       cands.push({ it, d });
     }
     cands.sort((a, b) => a.d - b.d);
-    const show = new Set(cands.slice(0, 2).map(c => c.it));
+    /* 手机屏小：只留最近的一个标签，且整体往内收，避免压住右上角小地图 */
+    const touchUI = document.body.classList.contains('touch');
+    const narrow = touchUI || w < 900;
+    const show = new Set(cands.slice(0, narrow ? 1 : 2).map(c => c.it));
     const used = [];
 
     camera.updateMatrixWorld();
@@ -198,13 +218,15 @@ window.HUD = (function () {
       if (sx < 36 || sx > w - 36 || sy < 40 || sy > h - 20) { setLabel(it, false); continue; }
 
       const side = sx < w * 0.5 ? -1 : 1;
-      let ox = sx + side * 96;
-      let oy = sy - 78;
+      let ox = sx + side * (narrow ? 74 : 96);
+      let oy = sy - (narrow ? 62 : 78);
       for (const u of used) {
         if (Math.abs(u.x - ox) < 190 && Math.abs(u.y - oy) < 70) oy -= 74;
       }
       used.push({ x: ox, y: oy });
-      ox = Math.max(110, Math.min(w - 110, ox));
+      /* 右侧留出小地图的地盘（触屏小地图贴右上角），否则卡片会骑在地图上 */
+      const rightLimit = w - (touchUI ? 200 : 110);
+      ox = Math.max(110, Math.min(rightLimit, ox));
       oy = Math.max(86, oy);
 
       const cardW = it.card.offsetWidth || 140;
@@ -231,13 +253,56 @@ window.HUD = (function () {
   }
 
   /* ---------- 小地图 ---------- */
-  H.drawMinimap = function (boat, traffic, dock) {
+  /* 环线抽稀点（一次性，避免每帧遍历 2000+ 点） */
+  const routePts = [];
+  let routeReady = false;
+  function buildRoutePts() {
+    routePts.length = 0;
+    routeReady = false;
+    const c = course && course.center;
+    if (!c || !mapBounds) return;
+    const step = Math.max(1, Math.round(c.length / 420));
+    for (let i = 0; i < c.length; i += step) routePts.push([mapBounds.X(c[i][0]), mapBounds.Y(c[i][1])]);
+    routeReady = routePts.length > 8;
+  }
+  function routePath(g) {
+    g.beginPath();
+    for (let i = 0; i < routePts.length; i++) {
+      const p = routePts[i];
+      if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]);
+    }
+    g.closePath();
+  }
+  /* 环形航线高亮：
+     gear 3（自动巡航）→ 常亮 + 流光线（不闪）
+     gear 1/2          → 明暗交替闪烁 + 虚线行进，提示"这是主航线" */
+  function drawRoute(g, gear, tsec) {
+    if (!routeReady) return;
+    g.save();
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    if (gear === 3) {
+      g.strokeStyle = 'rgba(186,166,255,.30)'; g.lineWidth = 7; routePath(g); g.stroke();
+      g.strokeStyle = 'rgba(214,200,255,.95)'; g.lineWidth = 2.2;
+      g.setLineDash([10, 7]); g.lineDashOffset = -tsec * 30; routePath(g); g.stroke();
+    } else {
+      const blink = 0.5 + 0.5 * Math.sin(tsec * 5.2);         // 明暗交替
+      g.globalAlpha = 0.22 + 0.42 * blink;
+      g.strokeStyle = 'rgba(255,214,120,.9)'; g.lineWidth = 6.5; routePath(g); g.stroke();
+      g.globalAlpha = 0.42 + 0.55 * blink;
+      g.strokeStyle = 'rgba(255,236,180,1)'; g.lineWidth = 2;
+      g.setLineDash([8, 8]); g.lineDashOffset = -tsec * 24; routePath(g); g.stroke();
+    }
+    g.restore();
+  }
+
+  H.drawMinimap = function (boat, traffic, dock, opt) {
     const cv = $('minimap');
     if (!cv || !staticMap) return;
     const g = cv.getContext('2d');
     g.clearRect(0, 0, 296, 296);
     g.drawImage(staticMap, 0, 0);
     const X = mapBounds.X, Y = mapBounds.Y;
+    drawRoute(g, (opt && opt.gear) || 1, (opt && opt.t) || 0);
     if (dock) {
       g.fillStyle = '#e8c86a';
       g.fillRect(X(dock.x) - 2.5, Y(dock.z) - 2.5, 5, 5);

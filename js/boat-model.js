@@ -170,15 +170,30 @@ window.BoatModel = (function () {
       const bench = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.07, 1.2), m.trim);
       bench.position.set(x, 0.56, 0); g.add(bench);
     });
-    // 船头甲板（盖住内舱，木纹面）
+    // 船底板（通长，盖住整个内舱）：水不能穿过船底 —— 从任何角度看进舱内都只能看到船板，
+    // 看不到水面。DoubleSide 保证翻船/侧倾时从背面看依然是实心船板。
     const dsh = new THREE.Shape();
-    dsh.moveTo(0.55, -1.28); dsh.lineTo(4.42, -0.30);
-    dsh.lineTo(4.42, 0.30); dsh.lineTo(0.55, 1.28);
+    const xf = L / 2 - 0.18, xb = -L / 2 + 0.16;
+    dsh.moveTo(xb, -0.56); dsh.lineTo(0.55, -1.26);
+    dsh.lineTo(xf, -0.30); dsh.lineTo(xf, 0.30);
+    dsh.lineTo(0.55, 1.26); dsh.lineTo(xb, 0.56);
     dsh.closePath();
     const dGeo = new THREE.ShapeGeometry(dsh);
     dGeo.rotateX(-Math.PI / 2);
-    const deck = new THREE.Mesh(dGeo, new THREE.MeshStandardMaterial({ map: Textures.get('woodLight'), color: 0x8a6c4c, roughness: 0.58, envMapIntensity: 0.35 }));
+    const deck = new THREE.Mesh(dGeo, new THREE.MeshStandardMaterial({
+      map: Textures.get('woodLight'), color: 0x8a6c4c, roughness: 0.58,
+      envMapIntensity: 0.35, side: THREE.DoubleSide
+    }));
     deck.position.y = 0.4; g.add(deck);
+    // 首尾封板（放样两端是开的，封住后舱体成为闭合壳体，水才不会从端头渗进来）
+    // 尺寸按各自端头的水线断面收，避免方块从船尖/船尾捅出去
+    const caps = [[-1, 0.18, 0.86, 1.00, 0.22], [1, 0.16, 0.90, 0.36, 0.38]];
+    for (const c of caps) {
+      const s = c[0];
+      const cp = new THREE.Mesh(new THREE.BoxGeometry(c[1], c[2], c[3]), m.hull);
+      cp.position.set(s > 0 ? L / 2 - 0.07 : -L / 2 + 0.06, c[4], 0);
+      g.add(cp);
+    }
     // 备用船桨（搭在船头右舷）
     const spare = new THREE.Group();
     const spShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.034, 2.9, 7), m.oar);
@@ -221,16 +236,17 @@ window.BoatModel = (function () {
     const lt = lantern(-2.9, 1.02, -0.62, 0.85);
     g.add(lt.grp);
     LR.addGrp(lt.grp, lt.body, 2.0, 0.38, 'lantern');
-    // 主船大灯（仅玩家，置于船头右舷前方，避开第一视角视线，亮度最大便于观景）
+    // 主船大灯（仅玩家，置于船头右舷极低位，避开第一视角视线，亮度最大便于观景）
     if (opts && opts.headLamp) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.5, 7), m.dark);
-      post.position.set(4.0, 0.62, 0.58); g.add(post);
-      const hl = lantern(4.0, 1.0, 0.58, 1.15);
-      hl.body.material.emissive.set(0xffc26a);           // 大灯偏暖白，照得更远
-      hl.body.material.color.set(0xf0d8b0);
+      const bx = L * 0.47;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.34, 7), m.dark);
+      post.position.set(bx, 0.30, 0.95); g.add(post);
+      const hl = lantern(bx, 0.60, 0.95, 0.52);
+      hl.body.material.emissive.set(0xffb45c);           // 大灯偏暖白，照得更远
+      hl.body.material.color.set(0xdcbf95);
       g.add(hl.grp);
-      const rec = LR.addGrp(hl.grp, hl.body, 3.0, 0.46, 'head');
-      rec.baseI = 1.7;
+      const rec = LR.addGrp(hl.grp, hl.body, 1.6, 0.30, 'head');
+      rec.baseI = 1.05;
     }
     return { group: g, oar: pivot, kind: 'wupeng', lamps: LR };
   }

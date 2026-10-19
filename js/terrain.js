@@ -179,11 +179,27 @@ window.Terrain = (function () {
   T.navigable = function (x, z) {
     const U = UTIL;
     if (!U.pointInRing(x, z, course.water)) return false;
+    /* 拱桥优先判定：拱洞正中可过（必须早于岛屿/堤身判定——岛屿多边形在断口处有方形端头，
+       会把拱洞下半截算成陆地，船就被"看不见的岸"挡住） */
+    const brs = window.__BRIDGES;
+    if (brs && brs.length) {
+      for (let i = 0; i < brs.length; i++) {
+        const b = brs[i];
+        const dx = x - b.x, dz = z - b.z;
+        const rr = b.span * 0.75;
+        if (dx * dx + dz * dz > rr * rr) continue;
+        const u = dx * b.ux + dz * b.uz;                 // 沿堤方向
+        const v = -dx * b.uz + dz * b.ux;                // 穿桥方向
+        const halfClear = b.span * 0.38;                 // 拱洞净宽的一半
+        const vIn = Math.abs(v) < b.width * 0.5 + 6;     // 桥身进深范围内
+        if (Math.abs(u) < halfClear && vIn) return true; // 拱洞正中：可穿
+        // 桥台一带（拱洞两侧、桥身进深内）不可穿；注意不能连带封住隧道进出口
+        if (Math.abs(u) >= halfClear && Math.abs(u) < halfClear + 1.6 && Math.abs(v) < b.width * 0.5 + 8) return false;
+      }
+    }
     for (let i = 0; i < course.islands.length; i++) if (U.pointInRing(x, z, course.islands[i])) return false;
     const ex = course.extraIslands || [];
     for (let i = 0; i < ex.length; i++) if (Math.hypot(x - ex[i].p[0], z - ex[i].p[1]) < ex[i].r + 2) return false;
-    const br = course.bridges;
-    for (let i = 0; i < br.length; i++) if (Math.hypot(x - br[i].x, z - br[i].z) < br[i].r) return true;
     for (const nm in course.causeways) {
       const half = (nm === '杨公堤' ? 11 : 9.5) + 2.4;
       const lines = course.causeways[nm];
@@ -225,7 +241,7 @@ window.Terrain = (function () {
       const gx = ((i + 1 < H.length ? H[i + 1] : h) - (i - 1 >= 0 ? H[i - 1] : h)) / (2 * stepX);
       const gz = ((i + nx < H.length ? H[i + nx] : h) - (i - nx >= 0 ? H[i - nx] : h)) / (2 * stepZ);
       const slope = Math.min(1, Math.hypot(gx, gz) * 1.4);
-      tmpC.copy(cGrass).lerp(cGrass2, U.hash2(x * 0.13 | 0, z * 0.13 | 0));
+      tmpC.copy(cGrass).lerp(cGrass2, U.fbm(x * 0.014, z * 0.014, 3));   // 平滑色变（逐格 hash 会产生大块三角色斑）
       tmpC.lerp(cRock, UTIL.smoothstep(12, 60, h) * (0.35 + 0.65 * slope));
       tmpC.lerp(cDark, UTIL.smoothstep(150, 320, h) * 0.5);
       tmpC.multiplyScalar((0.9 + U.noise2(x * 0.02, z * 0.02) * 0.2) * (0.92 + U.noise2(x * 0.09, z * 0.09) * 0.16));

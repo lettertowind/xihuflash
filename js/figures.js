@@ -49,33 +49,46 @@ window.Figures = (function () {
 
   function headGeo(kind) {
     const parts = [];
-    const face = new THREE.SphereGeometry(0.135, 8, 6);
-    bake(face, new THREE.Color(0xd9b18c)); parts.push(face);
+    const skin = new THREE.Color(0xe6c09a);        // 江南人肤色（此处为线性空间前的 sRGB 值）
+    const face = new THREE.SphereGeometry(0.136, 10, 7);
+    face.scale(0.95, 1.07, 1.0);
+    face.translate(0, -0.004, -0.004);
+    bake(face, skin); parts.push(face);
     const hairC = new THREE.Color(0x241d18);
+    /* 后脑与顶发：只盖到耳际，正面留出脸（旧版只有一小块顶发，远看像光头/黑块） */
+    const hair = new THREE.SphereGeometry(0.1425, 11, 7, 0, Math.PI * 2, 0, Math.PI * 0.56);
+    hair.scale(0.97, 1.04, 1.03);
+    hair.translate(0, 0.008, 0.014);
+    bake(hair, hairC); parts.push(hair);
     if (kind === 'putou') {
-      const cap = new THREE.BoxGeometry(0.2, 0.09, 0.19); cap.translate(0, 0.115, 0); bake(cap, hairC); parts.push(cap);
-      const wl = new THREE.BoxGeometry(0.1, 0.02, 0.04); wl.translate(-0.15, 0.13, 0); bake(wl, hairC); parts.push(wl);
-      const wr = new THREE.BoxGeometry(0.1, 0.02, 0.04); wr.translate(0.15, 0.13, 0); bake(wr, hairC); parts.push(wr);
+      const cap = new THREE.BoxGeometry(0.21, 0.1, 0.2); cap.translate(0, 0.125, 0.008); bake(cap, hairC); parts.push(cap);
+      const wl = new THREE.BoxGeometry(0.1, 0.022, 0.045); wl.translate(-0.155, 0.14, 0.008); bake(wl, hairC); parts.push(wl);
+      const wr = new THREE.BoxGeometry(0.1, 0.022, 0.045); wr.translate(0.155, 0.14, 0.008); bake(wr, hairC); parts.push(wr);
     } else if (kind === 'dongpo') {
-      const c1 = new THREE.BoxGeometry(0.17, 0.16, 0.17); c1.translate(0, 0.14, 0); bake(c1, hairC); parts.push(c1);
-      const c2 = new THREE.BoxGeometry(0.2, 0.05, 0.2); c2.translate(0, 0.05, 0); bake(c2, hairC); parts.push(c2);
+      const c1 = new THREE.BoxGeometry(0.18, 0.17, 0.18); c1.translate(0, 0.15, 0); bake(c1, hairC); parts.push(c1);
+      const c2 = new THREE.BoxGeometry(0.21, 0.05, 0.21); c2.translate(0, 0.06, 0); bake(c2, hairC); parts.push(c2);
     } else if (kind === 'hat') {
-      const cone = new THREE.ConeGeometry(0.24, 0.1, 9);
-      cone.translate(0, 0.14, 0);
-      bake(cone, new THREE.Color(0x8a734a)); parts.push(cone);
+      const cone = new THREE.ConeGeometry(0.25, 0.11, 10);
+      cone.translate(0, 0.15, 0);
+      bake(cone, new THREE.Color(0x9a8152)); parts.push(cone);
     } else {
-      const b1 = new THREE.SphereGeometry(0.075, 7, 5); b1.translate(0, 0.15, 0); bake(b1, hairC); parts.push(b1);
-      const b2 = new THREE.SphereGeometry(0.05, 6, 4); b2.translate(0.09, 0.11, 0); bake(b2, hairC); parts.push(b2);
+      const b1 = new THREE.SphereGeometry(0.078, 8, 6); b1.translate(0, 0.16, 0.02); bake(b1, hairC); parts.push(b1);
+      const b2 = new THREE.SphereGeometry(0.052, 6, 5); b2.translate(0.075, 0.13, 0.06); bake(b2, hairC); parts.push(b2);
     }
     return U.merge(parts);
   }
 
-  function armGeo() {
-    const arm = new THREE.CylinderGeometry(0.042, 0.052, 0.5, 6);
-    arm.translate(0, -0.25, 0);
-    const hand = new THREE.SphereGeometry(0.045, 6, 4);
-    hand.translate(0, -0.52, 0);
-    return U.merge([arm, hand]);
+  function armGeo() {                                          // 衣袖（颜色随袍色实例化）
+    const arm = new THREE.CylinderGeometry(0.044, 0.055, 0.48, 6);
+    arm.translate(0, -0.24, 0);
+    return U.merge([arm]);
+  }
+
+  function handGeo() {                                         // 手（肤色，单独一桶）
+    const palm = new THREE.SphereGeometry(0.055, 7, 5);
+    palm.scale(0.82, 1.32, 0.70);
+    palm.translate(0, -0.545, 0);
+    return U.merge([palm]);
   }
 
   function propGeo() {                                          // 拐杖（老者）
@@ -97,6 +110,10 @@ window.Figures = (function () {
   function mkBucket(key, geo, mat) {
     buckets[key] = { im: null, mat, geo, list: [] };
   }
+
+  /* 肤色（宋人偏暖黄，随机微差） */
+  const SKIN_TONES = [0xe8c6a0, 0xe2bb92, 0xd9ac82, 0xeccfab, 0xdcb28c];
+  function pickSkin() { return SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0]; }
 
   function finalizeBuckets() {
     const dyn = THREE.DynamicDrawUsage;
@@ -125,6 +142,14 @@ window.Figures = (function () {
       bk.list.forEach((pi, slot) => colorAt(bk, slot, persons[pi].colorHex));
       if (bk.im.instanceColor) bk.im.instanceColor.needsUpdate = true;
     });
+    // 双手：肤色（原先是和袖子同色，远看像"黑手"）
+    const bh = buckets.hands;
+    bh.list.forEach((pi, slot) => {
+      const c = new THREE.Color(persons[pi].skinHex);
+      c.offsetHSL(0, 0, (Math.random() - 0.5) * 0.05);
+      bh.im.setColorAt(slot, c);
+    });
+    if (bh.im.instanceColor) bh.im.instanceColor.needsUpdate = true;
   }
 
   function colorAt(bk, slot, hex) {
@@ -163,8 +188,15 @@ window.Figures = (function () {
       fat: 0.88 + Math.random() * 0.30,
       tall: 0.93 + Math.random() * 0.16,
       speed: 0.55 + Math.random() * 0.5,
+      /* 步态个性：摆臂幅度 / 上下起伏 / 身体左右摇摆各自独立取值，
+         同一批人里既有大摇大摆也有小步快走，避免整条街同步摆臂 */
+      armAmp: 0.34 + Math.random() * 0.30,
+      bobAmp: 0.032 + Math.random() * 0.024,
+      swayAmp: 0.018 + Math.random() * 0.026,
       colorHex: SONG_PALETTE[(Math.random() * SONG_PALETTE.length) | 0],
-      next: 4 + Math.random() * 12, partner: -1, dist2: 0
+      skinHex: pickSkin(),
+      next: 4 + Math.random() * 12, partner: -1, dist2: 0,
+      gT: 0, gy: undefined, wet: false, wetT: 0, safe: null
     }, mover, extra || {});
     p.idx = persons.length;
     p.slotB = buckets['b:' + p.bi].list.length;
@@ -174,6 +206,8 @@ window.Figures = (function () {
     p.slotA = buckets.arms.list.length;
     buckets.arms.list.push(p.idx);
     buckets.arms2.list.push(p.idx);
+    buckets.hands.list.push(p.idx);
+    p.slotHand = p.slotA;
     p.slotP = p.prop ? buckets.props.list.length : -1;
     if (p.prop) buckets.props.list.push(p.idx);
     persons.push(p);
@@ -181,6 +215,20 @@ window.Figures = (function () {
   }
 
   /* 场景1：景点游客 */
+  /* 找一处整圈都在陆上的环形巡游半径（防止沿岸环行时踩到水面） */
+  function fitRing(terr, cx, cz, r2) {
+    for (let r = r2; r >= 1.4; r *= 0.78) {
+      let ok = true;
+      for (let k = 0; k < 10; k++) {
+        const a = k / 10 * Math.PI * 2;
+        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+        if (terr.heightAt(x, z) < 1.15 || terr.exactShoreDist(x, z) < 0.8) { ok = false; break; }
+      }
+      if (ok) return r;
+    }
+    return 0;
+  }
+
   F.registerVisitors = function (lmList, terr, tr) {
     terrain = terr; tier = tr;
     const fc = (tr && tr.figures) || { visitPerMark: 6 };
@@ -189,21 +237,23 @@ window.Figures = (function () {
     for (const lm of lmList) {
       const k = fc.visitPerMark + ((VR() * 4) | 0);
       for (let i = 0; i < k; i++) {
-        for (let t2 = 0; t2 < 8; t2++) {
+        for (let t2 = 0; t2 < 10; t2++) {
           const a = VR() * Math.PI * 2, r2 = 5 + VR() * 20;
           const x = lm.x + Math.cos(a) * r2, z = lm.z + Math.sin(a) * r2;
           if (terrain.exactShoreDist(x, z) < 3) continue;
           const gy = terrain.heightAt(x, z);
           if (gy < 1.4 || gy > 40) continue;
+          const ringR = fitRing(terrain, x, z, 3 + VR() * 9);     // 整圈在陆上才用
+          if (!ringR) continue;
           const def = pickOutfit(VR() < 0.46);
-          const ring = { cx: x, cz: z, r2: 3 + VR() * 9, a: VR() * 6.283, w: (0.1 + VR() * 0.22) * (VR() < 0.5 ? 1 : -1) };
+          const ring = { cx: x, cz: z, r2: ringR, a: VR() * 6.283, w: (0.1 + VR() * 0.22) * (VR() < 0.5 ? 1 : -1) };
           const r3 = VR();
           let mode = 'WALK';
           if (r3 < 0.18) mode = 'IDLE';
           else if (r3 < 0.3 && prevTalk >= 0) mode = 'TALK';
           else if (r3 < 0.4) mode = 'LEAN';
           else if (r3 < 0.48) mode = 'WAVE';
-          const p = addPerson(def, { ring, y: gy, scene: 'visit' }, { mode });
+          const p = addPerson(def, { ring, y: gy, scene: 'visit', safe: { x, z } }, { mode });
           if (mode === 'TALK' && prevTalk >= 0) {
             persons[prevTalk].mode = 'TALK'; persons[prevTalk].partner = p.idx; p.partner = prevTalk;
             prevTalk = -1;
@@ -253,9 +303,23 @@ window.Figures = (function () {
       if (terrain.exactShoreDist(x, z) < 6) continue;
       const gy = terrain.heightAt(x, z);
       if (gy < 1.4 || gy > 30) continue;
-      const seg = [[x - dx / dl * 24, z - dz / dl * 24], [x + dx / dl * 24, z + dz / dl * 24]];
+      /* 巡游段必须整段在陆上：从 24m 逐步缩短到 6m，找不到就换点
+         （旧版随机取 48m 直段，跨过湖湾时人物就"走在水面上"） */
+      const ux = dx / dl, uz = dz / dl;
+      let half = 0;
+      for (const h of [24, 20, 16, 12, 9, 6]) {
+        let ok = true;
+        for (let k = -3; k <= 3; k++) {
+          const t = h * k / 3;
+          const sx = x + ux * t, sz = z + uz * t;
+          if (terrain.heightAt(sx, sz) < 1.15 || terrain.exactShoreDist(sx, sz) < 1.2) { ok = false; break; }
+        }
+        if (ok) { half = h; break; }
+      }
+      if (!half) continue;
+      const seg = [[x - ux * half, z - uz * half], [x + ux * half, z + uz * half]];
       const def = pickOutfit(Math.random() < 0.44);
-      addPerson(def, { path: seg, cum: cumLen(seg), s: Math.random() * 48, dir: Math.random() < 0.5 ? 1 : -1, y: gy, scene: 'shore' }, { mode: Math.random() < 0.75 ? 'WALK' : 'IDLE' });
+      addPerson(def, { path: seg, cum: cumLen(seg), s: Math.random() * half * 2, dir: Math.random() < 0.5 ? 1 : -1, y: gy, scene: 'shore', safe: { x, z } }, { mode: Math.random() < 0.75 ? 'WALK' : 'IDLE' });
       placed++;
     }
   };
@@ -287,6 +351,7 @@ window.Figures = (function () {
 
   /* ---------------- 更新 ---------------- */
   const mBody = new THREE.Matrix4(), mPart = new THREE.Matrix4(), tmpM = new THREE.Matrix4();
+  const SEAT_FACE = new THREE.Matrix4().makeRotationY(-Math.PI / 2);
   const q = new THREE.Quaternion(), eul = new THREE.Euler(), pv = new THREE.Vector3(), sv = new THREE.Vector3();
   const ZEROM = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -301,9 +366,9 @@ window.Figures = (function () {
     const a = line[i - 1], b2 = line[i];
     out.x = a[0] + (b2[0] - a[0]) * k;
     out.z = a[1] + (b2[1] - a[1]) * k;
-    out.yaw = p.dir > 0
-      ? Math.atan2(-(b2[0] - a[0]), b2[1] - a[1])
-      : Math.atan2(-(a[0] - b2[0]), a[1] - b2[1]);
+    // 人物前方 = 局部 -Z：朝向须使 -Z 映射到行进方向
+    const dx = b2[0] - a[0], dz = b2[1] - a[1];
+    out.yaw = p.dir > 0 ? Math.atan2(-dx, -dz) : Math.atan2(dx, dz);
   }
   const pout = { x: 0, z: 0, yaw: 0 };
 
@@ -345,6 +410,7 @@ window.Figures = (function () {
       if (p.boat) {
         if (!p.boat.grp.visible) { writeZero(p); continue; }
         tmpM.makeTranslation(p.seat[0], p.seat[1], p.seat[2]);
+        tmpM.multiply(SEAT_FACE);            // 人物前方 -Z → 船首 +X
         if (p.rower) tmpM.elements[12] += Math.sin((p.boat.phase || 0) * 2.2) * 0.06;
         mBody.copy(p.boat.grp.matrixWorld).multiply(tmpM);
         eul.setFromRotationMatrix(mBody, 'YXZ');
@@ -356,11 +422,11 @@ window.Figures = (function () {
         x = p.ring.cx + Math.cos(p.ring.a) * p.ring.r2;
         z = p.ring.cz + Math.sin(p.ring.a) * p.ring.r2;
         const sgn = p.ring.w >= 0 ? 1 : -1;
-        yaw = sgn > 0 ? Math.atan2(Math.sin(p.ring.a), Math.cos(p.ring.a)) - Math.PI / 2
-          : Math.atan2(Math.sin(p.ring.a), Math.cos(p.ring.a)) + Math.PI / 2;
+        // 环行切向 = (±-sin a, ±cos a)，人物前方 -Z 映射到切向
+        yaw = sgn > 0 ? Math.PI - p.ring.a : -p.ring.a;
         if (p.mode === 'TALK' && p.partner >= 0) {
           const pr = persons[p.partner];
-          if (pr && pr.ring) yaw = Math.atan2(-(pr.ring.cx - x), pr.ring.cz - z);
+          if (pr && pr.ring) yaw = Math.atan2(x - pr.ring.cx, z - pr.ring.cz);
         }
       } else if (p.path) {
         if (lod === 2) { if (p.frozen) continue; p.frozen = 1e9; }
@@ -369,6 +435,33 @@ window.Figures = (function () {
         x = pout.x; z = pout.z; yaw = pout.yaw;
         p._lx = x; p._lz = z;
       } else continue;
+
+      /* 落地校验：周期采样脚下地面——在水面上的人物隐去（防水上漂），并跟随地形起伏
+         注意：船客站在船上，坐标本就落在水面，不能参与此校验（旧版因此把所有船客都隐藏了） */
+      if (!p.boat) {
+        p.gT -= dt;
+        if (p.gT <= 0) {
+          p.gT = 0.3 + Math.random() * 0.25;
+          p.gy = terrain ? terrain.heightAt(x, z) : p.y;
+          p.wet = p.gy < 1.15;
+        }
+        if (p.wet) {
+          writeZero(p);
+          p.wetT += dt;
+          if (p.wetT > 0.8) {
+            /* 兜底：拉回已验证过的陆地位置，绝不在水面上行走 */
+            p.wetT = 0; p.wet = false;
+            if (p.ring && p.safe) {
+              p.ring.cx = p.safe.x; p.ring.cz = p.safe.z;
+              p.ring.r2 = Math.max(1.5, p.ring.r2 * 0.55);
+            } else if (p.path) {
+              p.s = 0; p.dir *= -1;
+            }
+          }
+          continue;
+        }
+        p.wetT = 0;
+      }
 
       /* 动作切换（船客只做 NOD/WAVE/IDLE 微动作） */
       if (p.next <= 0 && p.scene !== 'boat') {
@@ -384,9 +477,11 @@ window.Figures = (function () {
 
       let bob = 0, roll = 0, nodA = 0, armL = 0, armR = 0, lean = 0, jumpY = 0;
       if (p.mode === 'WALK') {
-        bob = Math.abs(Math.sin(p.phase)) * 0.045;
-        roll = Math.sin(p.phase) * 0.03;
-        armL = Math.sin(p.phase) * 0.5; armR = -armL;
+        bob = Math.abs(Math.sin(p.phase)) * (p.bobAmp || 0.045);
+        roll = Math.sin(p.phase) * (p.swayAmp || 0.03);
+        // 两只胳膊不完全对称：行进时一侧摆动略小，像提物/扶袖
+        armL = Math.sin(p.phase) * (p.armAmp || 0.5);
+        armR = -armL * (0.72 + 0.28 * (p.fat || 1));
       } else if (p.mode === 'IDLE') {
         bob = Math.sin(p.t * 1.4 + p.phase) * 0.012;
         armL = Math.sin(p.t * 1.1) * 0.05; armR = -armL;
@@ -412,7 +507,7 @@ window.Figures = (function () {
       } else {
         eul.set(0, yaw, roll + lean, 'YXZ');
         q.setFromEuler(eul);
-        pv.set(x, p.y + bob + jumpY, z);
+        pv.set(x, (p.gy !== undefined ? p.gy : p.y) + bob + jumpY, z);
         sv.set(p.scale * p.fat, p.scale * p.tall, p.scale * p.fat);
         mBody.compose(pv, q, sv);
       }
@@ -432,6 +527,7 @@ window.Figures = (function () {
         const shY = p.bi === 'child' ? 0.72 : 1.38, shW = p.bi === 'child' ? 0.13 : 0.19;
         mPart.copy(mBody); tmpM.makeTranslation(-shW, shY, 0); mPart.multiply(tmpM); tmpM.makeRotationX(armL); mPart.multiply(tmpM);
         buckets.arms.im.setMatrixAt(p.slotA, mPart);
+        buckets.hands.im.setMatrixAt(p.slotHand, mPart);          // hands 几何自带腕端偏移
         mPart.copy(mBody); tmpM.makeTranslation(shW, shY, 0); mPart.multiply(tmpM); tmpM.makeRotationX(armR); mPart.multiply(tmpM);
         buckets.arms2.im.setMatrixAt(p.slotA, mPart);
         if (p.prop) {
@@ -456,12 +552,26 @@ window.Figures = (function () {
     buckets['h:' + p.hi].im.setMatrixAt(p.slotH, ZEROM);
     buckets.arms.im.setMatrixAt(p.slotA, ZEROM);
     buckets.arms2.im.setMatrixAt(p.slotA, ZEROM);
+    buckets.hands.im.setMatrixAt(p.slotHand, ZEROM);
     if (p.prop) buckets.props.im.setMatrixAt(p.slotP, ZEROM);
   }
 
   F.stats = function () {
     const out = { persons: persons.length, buckets: {} };
     for (const k in buckets) out.buckets[k] = buckets[k].list.length;
+    return out;
+  };
+
+  /* 调试取样：返回若干人物的世界坐标（验收截图定位用） */
+  F.sample = function (n) {
+    const out = [];
+    for (let i = 0; i < persons.length && out.length < (n || 6); i++) {
+      const p = persons[i];
+      if (p.scene === 'boat' || p.wet) continue;
+      const x = p.ring ? p.ring.cx + Math.cos(p.ring.a) * p.ring.r2 : (p._lx || 0);
+      const z = p.ring ? p.ring.cz + Math.sin(p.ring.a) * p.ring.r2 : (p._lz || 0);
+      out.push({ x, z, y: p.gy || 1.8, scene: p.scene, head: p.bi });
+    }
     return out;
   };
 
@@ -474,10 +584,148 @@ window.Figures = (function () {
     const ag = armGeo();
     mkBucket('arms', ag, new THREE.MeshLambertMaterial({}));
     mkBucket('arms2', ag.clone(), new THREE.MeshLambertMaterial({}));
+    mkBucket('hands', handGeo(), new THREE.MeshLambertMaterial({ color: 0xffffff }));
     mkBucket('props', propGeo(), new THREE.MeshLambertMaterial({ color: 0x6a4a2c }));
     F.registerVisitors(lmList, terr, tr);
     F.registerWalkers(course, terr, tr);
     // finalize 延迟到首次 update（让 Traffic 乘客也能注册）
+  };
+
+  /* ---------------- 单体人物建模（非实例化；玩家自身等，以后可复用） ----------------
+     返回 { group, body, head, armL, armR }；人物前方 = 局部 -Z，身高约 1.75*scale */
+  F.makeFigure = function (opt) {
+    opt = opt || {};
+    const color = opt.color || 0x4a6e8c;
+    const skin = opt.skin || 0xe6c09a;
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshLambertMaterial({ color });
+    const body = new THREE.Mesh(bodyGeo(opt.body || 'gown'), bodyMat);
+    g.add(body);
+    const head = new THREE.Mesh(headGeo(opt.head || 'dongpo'), new THREE.MeshLambertMaterial({ vertexColors: true }));
+    head.position.y = 1.56;
+    g.add(head);
+    const armMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(0.86) });
+    const handMat = new THREE.MeshLambertMaterial({ color: skin });
+    const hg = new THREE.SphereGeometry(0.048, 8, 6);
+    const armL = new THREE.Mesh(armGeo(), armMat);
+    armL.position.set(-0.19, 1.38, 0);
+    const armR = new THREE.Mesh(armGeo(), armMat);
+    armR.position.set(0.19, 1.38, 0);
+    const handL = new THREE.Mesh(hg, handMat); handL.position.set(-0.19, 0.855, 0);
+    const handR = new THREE.Mesh(hg, handMat); handR.position.set(0.19, 0.855, 0);
+    g.add(armL); g.add(armR); g.add(handL); g.add(handR);
+    const s = opt.scale || 1;
+    g.scale.set(s, s, s);
+    return { group: g, body, head, armL, armR, handL, handR, bodyMat, armMat };
+  };
+
+  /* ---------------- 玩家自身（第一视角可见的身体 / 第三人称完整人物） ----------------
+     古人装束：交领右衽长袍 + 束腰 + 蓑衣 + 斗笠（烟雨江南的船家打扮）。
+     局部坐标：前方 = -Z；y=0 为甲板面。返回 { group, head, hat, hands, setFirstPerson } */
+  function playerAvatar(opt) {
+    opt = opt || {};
+    const skin = 0xe6c09a;
+    const robeC = opt.robe === undefined ? 0x35506b : opt.robe;       // 靛青
+    const innerC = 0xe8e4d6;                                           // 中衣月白
+    const strawC = 0x9a8152;                                           // 蓑衣/斗笠
+    const mRobe = new THREE.MeshLambertMaterial({ color: robeC });
+    const mInner = new THREE.MeshLambertMaterial({ color: innerC });
+    const mStraw = new THREE.MeshLambertMaterial({ color: strawC, side: THREE.DoubleSide });
+    const mSkin = new THREE.MeshLambertMaterial({ color: skin });
+    const mHair = new THREE.MeshLambertMaterial({ color: 0x241d18 });
+    const mBelt = new THREE.MeshLambertMaterial({ color: 0x2f2b26 });
+    const g = new THREE.Group();
+
+    /* 盘坐的袍摆（下盘） */
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.42, 0.26, 12), mRobe);
+    skirt.position.y = 0.12; g.add(skirt);
+    /* 双膝（袍下顶起） */
+    for (const s of [-1, 1]) {
+      const knee = new THREE.Mesh(new THREE.SphereGeometry(0.135, 9, 7), mRobe);
+      knee.scale.set(1.05, 0.85, 1.15);
+      knee.position.set(s * 0.145, 0.16, -0.24);
+      g.add(knee);
+    }
+    /* 上身 */
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.215, 0.54, 10), mRobe);
+    torso.position.y = 0.45; g.add(torso);
+    /* 交领右衽（胸前白色 V 形衣襟） */
+    for (const s of [-1, 1]) {
+      const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.4, 0.03), mInner);
+      lapel.position.set(s * 0.06, 0.56, -0.16);
+      lapel.rotation.z = s * 0.34;
+      lapel.rotation.x = -0.1;
+      g.add(lapel);
+    }
+    /* 束腰 */
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.205, 0.09, 10), mBelt);
+    belt.position.y = 0.28; g.add(belt);
+    /* 肩 */
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 7), mRobe);
+    shoulder.scale.set(1.3, 0.62, 0.95);
+    shoulder.position.y = 0.70; g.add(shoulder);
+    /* 蓑衣（草编披肩，开口朝前） */
+    const cape = new THREE.Mesh(new THREE.ConeGeometry(0.43, 0.52, 14, 1, true, Math.PI * 0.18, Math.PI * 1.64), mStraw);
+    cape.position.y = 0.60;
+    g.add(cape);
+    /* 颈 + 头 */
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.062, 0.1, 8), mSkin);
+    neck.position.y = 0.80; g.add(neck);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.118, 12, 9), mSkin);
+    head.scale.set(0.94, 1.06, 0.98);
+    head.position.y = 0.905; g.add(head);
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.124, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.58), mHair);
+    hair.position.set(0, 0.915, 0.012); g.add(hair);
+    const bun = new THREE.Mesh(new THREE.SphereGeometry(0.062, 8, 6), mHair);
+    bun.position.set(0, 1.03, 0.035); g.add(bun);
+    /* 斗笠 */
+    const hat = new THREE.Group();
+    const brim = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.17, 14), mStraw);
+    brim.position.y = 0.02; hat.add(brim);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), mStraw);
+    knob.position.y = 0.1; hat.add(knob);
+    hat.position.y = 0.99;
+    g.add(hat);
+    /* 双臂：衣袖（管状） + 肤色双手，落在膝上 */
+    const hands = [];
+    for (const s of [-1, 1]) {
+      const pts = [
+        [s * 0.19, 0.68, 0.0],
+        [s * 0.245, 0.50, -0.14],
+        [s * 0.235, 0.30, -0.30],
+        [s * 0.215, 0.20, -0.38]
+      ];
+      const sleeve = new THREE.Mesh(U.tube(pts, 0.062, 14, 6), mRobe);
+      g.add(sleeve);
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.056, 0.05, 0.06, 8), mInner);
+      cuff.position.set(s * 0.215, 0.215, -0.375);
+      cuff.rotation.x = 0.9;
+      g.add(cuff);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), mSkin);
+      hand.scale.set(0.9, 0.8, 1.25);
+      hand.position.set(s * 0.2, 0.185, -0.42);
+      g.add(hand);
+      hands.push(hand);
+    }
+    const api = {
+      group: g, head, hair, bun, hat, hands, cape,
+      /* 第一视角：藏头与斗笠（相机在头内），其余留作"自己的身体" */
+      setFirstPerson: function (on) {
+        head.visible = !on; hair.visible = !on; bun.visible = !on; hat.visible = !on;
+      }
+    };
+    return api;
+  }
+
+  window.PlayerModel = {
+    build: F.makeFigure,
+    avatar: playerAvatar,
+    /* 坐姿人物（旧接口保留） */
+    seated: function (opt) {
+      const a = playerAvatar(opt);
+      a.setFirstPerson(false);
+      return a;
+    }
   };
 
   return F;
