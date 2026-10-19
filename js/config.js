@@ -12,11 +12,27 @@ window.CFG = {
   weather: {
     fog: 0xaeb9b5,
     fogDensity: 0.00078,
+    dayLength: 240,            // 一昼夜 = 现实 4 分钟
+    dayStart: 0.16,            // 开局时刻（0=日出，0.25=正午，0.5=日落，0.75=午夜）
+    lampOn: 0.5,               // 昼光低于此阈值时船灯点亮
+    nightFogDensity: 0.00105,
     zenith: 0x5f7178,
     mid: 0x93a3a3,
     horizon: 0xc7cfc8,
     cloudLight: 0xbcc5c1,
     cloudDark: 0x7c898b,
+    night: {
+      fog: 0x2c3540,
+      zenith: 0x131a26,
+      mid: 0x1f2933,
+      horizon: 0x37414d,
+      cloudLight: 0x2a323d,
+      cloudDark: 0x171d26,
+      hemiSky: 0x2b3541,
+      hemiGround: 0x1b2018,
+      sunColor: 0x93a7c8,      // 月色
+      fogColor: 0x2c3540
+    },
     hemiSky: 0xa9b8ba,
     hemiGround: 0x55604f,
     hemiIntensity: 1.4,
@@ -94,13 +110,13 @@ window.CFG = {
   quality: {
     tiers: [
       { name: 'cpu', dpr: 0.75, terrain: 128, trees: 180, treeNear: 40, reflect: false, shadow: false, rain: 600, mist: 1, ai: 2, patchSeg: 48, aniso: 1,
-        birds: { egret: 0, swallow: 4, duck: 0 }, figures: { boat: 1, walk: 8, visitPerMark: 3, armFrame: 4 }, villages: 18 },
+        birds: { egret: 0, swallow: 4, duck: 0 }, figures: { boat: 1, walk: 14, visitPerMark: 4, armFrame: 4 }, villages: 26 },
       { name: 'low', dpr: 1.00, terrain: 192, trees: 500, treeNear: 120, reflect: false, shadow: false, rain: 1500, mist: 2, ai: 4, patchSeg: 64, aniso: 2,
-        birds: { egret: 2, swallow: 8, duck: 6 }, figures: { boat: 2, walk: 24, visitPerMark: 5, armFrame: 3 }, villages: 30 },
+        birds: { egret: 2, swallow: 8, duck: 6 }, figures: { boat: 2, walk: 42, visitPerMark: 7, armFrame: 3 }, villages: 44 },
       { name: 'mid', dpr: 1.25, terrain: 224, trees: 750, treeNear: 260, reflect: true, shadow: false, rain: 3000, mist: 4, ai: 6, patchSeg: 80, aniso: 4,
-        birds: { egret: 3, swallow: 12, duck: 12 }, figures: { boat: 3, walk: 40, visitPerMark: 7, armFrame: 2 }, villages: 44 },
+        birds: { egret: 3, swallow: 12, duck: 12 }, figures: { boat: 3, walk: 72, visitPerMark: 10, armFrame: 2 }, villages: 64 },
       { name: 'high', dpr: 1.50, terrain: 256, trees: 1000, treeNear: 400, reflect: true, shadow: true, rain: 5000, mist: 6, ai: 8, patchSeg: 96, aniso: 8,
-        birds: { egret: 5, swallow: 16, duck: 18 }, figures: { boat: 4, walk: 60, visitPerMark: 10, armFrame: 1 }, villages: 48 }
+        birds: { egret: 5, swallow: 16, duck: 18 }, figures: { boat: 4, walk: 110, visitPerMark: 14, armFrame: 1 }, villages: 84 }
     ]
   }
 };

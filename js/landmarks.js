@@ -79,8 +79,8 @@ window.Landmarks = (function () {
     const B = Buildings;
     const g = new THREE.Group();
     if (kind === 'temple') {
-      g.add(B.hall({ w: 28, d: 17, h: 11.5 }));
-      const side = B.hall({ w: 15, d: 9, h: 6.5 });
+      g.add(B.hall({ w: 35, d: 21, h: 14 }));
+      const side = B.hall({ w: 18, d: 10, h: 7.5 });
       side.position.set(-21, 0, -4); side.rotation.y = 0.2; g.add(side);
       g.add(B.wallRun([[-20, 0, -14], [20, 0, -14]], 2.6, 0.5));
       const sb = B.stele(name); sb.position.set(7.5, 0, 9); g.add(sb);
@@ -105,7 +105,7 @@ window.Landmarks = (function () {
       g.add(B.wallRun([[-6, 0, 0], [-21, 0, 0]], 3.4, 1.1));
       g.add(B.wallRun([[6, 0, 0], [21, 0, 0]], 3.4, 1.1));
     } else if (kind === 'qianwang') {
-      g.add(B.paifang({ w: 13, h: 9.4 }));
+      g.add(B.paifang({ w: 16, h: 11.5 }));
       const rw1 = new THREE.Mesh(new THREE.BoxGeometry(14, 2.8, 0.5), m.red);
       rw1.position.set(-11, 1.4, 1.5); g.add(rw1);
       const rw2 = new THREE.Mesh(new THREE.BoxGeometry(14, 2.8, 0.5), m.red);
@@ -149,9 +149,9 @@ window.Landmarks = (function () {
     const cap = (tier && tier.villages) || 44;
     const spots = [];
     const imSpots = [];                                        // 超出 22 处的走合批 IM
-    const step = Math.max(14, Math.floor(course.water.length / 140));
+    const step = Math.max(9, Math.floor(course.water.length / 95));
     let tries = 0;
-    for (let i = 6; i < course.water.length && spots.length < cap && tries < 1200; i += step, tries++) {
+    for (let i = 6; i < course.water.length && spots.length < cap && tries < 2000; i += step, tries++) {
       const p = course.water[i];
       let bn = [0, 1], bd = -1e9;
       for (let k = 0; k < 8; k++) {
@@ -160,16 +160,16 @@ window.Landmarks = (function () {
         if (sd > bd) { bd = sd; bn = [Math.cos(a), Math.sin(a)]; }
       }
       if (bd < 2) continue;
-      const off = 26 + rr() * 55;
+      const off = 22 + rr() * 45;
       const x = p[0] + bn[0] * off, z = p[1] + bn[1] * off;
       if (terrain.exactShoreDist(x, z) < 16) continue;
       const gy = terrain.heightAt(x, z);
       if (gy > 30 || gy < 1.0 || terrain.onCauseway(x, z)) continue;
       let ok = true;
-      for (const lm of L.list) if (Math.hypot(x - lm.x, z - lm.z) < 55) { ok = false; break; }
-      if (ok) for (const br of course.bridges) if (Math.hypot(x - br.x, z - br.z) < br.r + 26) { ok = false; break; }
+      for (const lm of L.list) if (Math.hypot(x - lm.x, z - lm.z) < 42) { ok = false; break; }
+      if (ok) for (const br of course.bridges) if (Math.hypot(x - br.x, z - br.z) < br.r + 22) { ok = false; break; }
       if (ok && L.dock && Math.hypot(x - L.dock.x, z - L.dock.z) < 60) ok = false;
-      if (ok) for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 55) { ok = false; break; }
+      if (ok) for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 34) { ok = false; break; }
       if (!ok) continue;
       spots.push({ x, z });
       if (spots.length > 22) { imSpots.push({ x, z, gy }); continue; }   // 超额村舍走合批
@@ -260,11 +260,11 @@ window.Landmarks = (function () {
     for (const arc of arcs) {
       const i0 = arc[0], n = ((arc[1] - arc[0]) + ring.length) % ring.length;
       let acc = 0;
-      for (let k = 0; k < n && spots.length < 34; k++) {
+      for (let k = 0; k < n && spots.length < 50; k++) {
         const p = ring[(i0 + k) % ring.length], p2 = ring[(i0 + k + 1) % ring.length];
         const dx = p2[0] - p[0], dz = p2[1] - p[1], dl = Math.hypot(dx, dz) || 1;
         acc += dl;
-        if (acc < 15) continue; acc = 0;
+        if (acc < 11) continue; acc = 0;
         const nx = -dz / dl, nz = dx / dl;
         const sgn = terrain.shoreDist(p[0] + nx * 6, p[1] + nz * 6) > terrain.shoreDist(p[0] - nx * 6, p[1] - nz * 6) ? 1 : -1;
         const off = 7 + rr() * 8;
@@ -274,9 +274,9 @@ window.Landmarks = (function () {
         const gy = terrain.heightAt(x, z);
         if (gy < 1.2 || gy > 25 || terrain.onCauseway(x, z)) continue;
         let ok = true;
-        for (const lm of course.landmarks) if (Math.hypot(x - lm.x, z - lm.z) < 32) { ok = false; break; }
+        for (const lm of course.landmarks) if (Math.hypot(x - lm.x, z - lm.z) < 26) { ok = false; break; }
         if (ok && course.start && Math.hypot(x - course.start.x, z - course.start.z) < 45) ok = false;
-        if (ok) for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 24) { ok = false; break; }
+        if (ok) for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 17) { ok = false; break; }
         if (!ok) continue;
         spots.push({ x, z, gy, yaw: Math.atan2(-nx * sgn, nz * sgn) + (rr() - 0.5) * 0.3 });
       }
@@ -480,15 +480,15 @@ window.Landmarks = (function () {
     }
 
     /* 1. 湖滨·集贤亭（放大主体） */
-    place('湖滨·集贤亭', B.pavilion({ w: 8.4, h: 6.0, sides: 8, plaque: '集贤亭' }), { rotY: -Math.PI / 2, hy: 13, visitR: 240, enlarged: true });
+    place('湖滨·集贤亭', B.pavilion({ w: 10.2, h: 7.2, sides: 8, plaque: '集贤亭' }), { rotY: -Math.PI / 2, hy: 13, visitR: 240, enlarged: true });
 
     /* 2. 断桥残雪（石碑，桥本体在六桥段） */
     place('断桥残雪', B.stele('断桥残雪'), { y: 1.78, hy: 12, visitR: 160 });
 
     /* 3. 保俶塔：宝石山巅七级砖塔（放大） */
     place('保俶塔', B.pagoda({
-      tiers: 7, baseR: 4.4, tierHs: [7.0, 6.6, 6.2, 6.0, 5.8, 5.5, 5.3],
-      shrink: 0.92, plain: true, bodyMat: m.brick, finialH: 6.6
+      tiers: 7, baseR: 5.4, tierHs: [8.4, 7.9, 7.4, 7.2, 7.0, 6.6, 6.4],
+      shrink: 0.92, plain: true, bodyMat: m.brick, finialH: 8.0
     }), { hy: 70, visitR: 360, enlarged: true });
 
     /* 4. 平湖秋月：临水平台 + 八角亭 */
@@ -568,11 +568,11 @@ window.Landmarks = (function () {
 
     /* 11. 湖心亭：大八角亭 + 四角灯笼（放大） */
     const hx = new THREE.Group();
-    hx.add(B.pavilion({ w: 9.6, h: 6.4, sides: 8, plaque: '湖心亭' }));
+    hx.add(B.pavilion({ w: 11.8, h: 7.6, sides: 8, plaque: '湖心亭' }));
     for (let i = 0; i < 4; i++) {
       const a = Math.PI / 4 + i * Math.PI / 2;
       const ln = B.lantern(1.9);
-      ln.position.set(Math.cos(a) * 7.2, 0.7, Math.sin(a) * 7.2);
+      ln.position.set(Math.cos(a) * 8.6, 0.7, Math.sin(a) * 8.6);
       hx.add(ln);
     }
     place('湖心亭', hx, { hy: 18, visitR: 270, enlarged: true });
@@ -588,13 +588,13 @@ window.Landmarks = (function () {
 
     /* 14. 雷峰塔：五级大塔（放大） */
     place('雷峰塔', B.pagoda({
-      tiers: 5, baseR: 20, tierHs: [16, 14.8, 14, 13, 11.9],
-      shrink: 0.9, bodyMat: m.brick, roofMat: m.roofDark, finialH: 12
+      tiers: 5, baseR: 24, tierHs: [19.2, 17.8, 16.8, 15.6, 14.3],
+      shrink: 0.9, bodyMat: m.brick, roofMat: m.roofDark, finialH: 14.4
     }), { hy: 88, visitR: 400, enlarged: true });
 
     /* 15. 净慈寺：大殿 + 院墙（放大） */
     const jc = new THREE.Group();
-    jc.add(B.hall({ w: 36, d: 21, h: 13.5 }));
+    jc.add(B.hall({ w: 44, d: 25, h: 16.5 }));
     const cw1 = B.wallRun([[-26, 0, -17], [26, 0, -17]], 2.4, 0.5); jc.add(cw1);
     const cw2 = B.wallRun([[-26, 0, 17], [-26, 0, -17]], 2.4, 0.5); jc.add(cw2);
     const cw3 = B.wallRun([[26, 0, 17], [26, 0, -17]], 2.4, 0.5); jc.add(cw3);
@@ -605,8 +605,8 @@ window.Landmarks = (function () {
 
     /* 17. 城隍阁：吴山之巅三层楼阁（放大） */
     place('城隍阁', B.pagoda({
-      tiers: 3, baseR: 17, tierHs: [13, 11.5, 10],
-      shrink: 0.88, bodyMat: m.plaster, roofMat: m.roofDark, finialH: 8.5
+      tiers: 3, baseR: 21, tierHs: [16, 14.2, 12.3],
+      shrink: 0.88, bodyMat: m.plaster, roofMat: m.roofDark, finialH: 10.5
     }), { hy: 42, visitR: 380, enlarged: true });
 
     /* ---------------- 六桥（按所属堤分类命名 + 拱桥建模） ---------------- */

@@ -11,7 +11,7 @@ window.Water = (function () {
   for (let i = 0; i < 8; i++) boatsU.push(new THREE.Vector4(0, 0, 0, 0));
 
   const FRAG = `
-    uniform float uTime,uFogDensity,uFoamW,uRain,uHasRefl,uIsPatch,uShoreSpan;
+    uniform float uTime,uFogDensity,uFoamW,uRain,uHasRefl,uIsPatch,uShoreSpan,uSunI;
     uniform vec3 uDeep,uShallow,uSilt,uFog,uSunDir,uZenith,uHorizon;
     uniform vec2 uShoreXY;
     uniform sampler2D uNormalA,uNormalB,uFoamSDF,uFoamTex,uReflect;
@@ -19,18 +19,12 @@ window.Water = (function () {
     uniform mat4 uTexMatrix;
     varying vec3 vWorld; varying float vEdge;
     float hash21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+    /* 细雨涟漪：平滑滚动噪声（旧版格环会在湖面留下规则网格状亮斑，已弃用） */
     vec2 ripple(vec2 p, float t){
-      vec2 acc=vec2(0.0);
-      for(int k=0;k<2;k++){
-        vec2 q=p*(0.85+float(k)*0.75)+float(k)*31.7;
-        vec2 cell=floor(q); vec2 f=fract(q)-0.5;
-        float h=hash21(cell);
-        float ph=fract(t*0.65+h*7.0);
-        float r=length(f);
-        float ring=smoothstep(0.40,0.0,abs(r-ph*0.45))*(1.0-ph);
-        acc+=(f/max(r,1e-4))*ring;
-      }
-      return acc;
+      float n1=sin(p.x*0.83+t*2.0)*sin(p.y*1.07-t*1.6);
+      float n2=sin((p.x*0.41-p.y*0.33)+t*1.05);
+      float n3=sin((p.x*0.19+p.y*0.53)-t*0.7);
+      return vec2(n1*0.42+n2*0.30, n1*0.28-n3*0.34)*(0.25+0.75*uRain);
     }
     float wakeFoam(vec2 p){
       float s=0.0;
@@ -56,16 +50,16 @@ window.Water = (function () {
       if(uIsPatch>0.5 && sd<0.45) discard;
       float distToCam=length(cameraPosition-vWorld);
       float hi=exp(-distToCam*0.0045);
+      vec3 n0=texture2D(uNormalB,p*0.0042+vec2(uTime*0.0038,uTime*0.0026)).xyz*2.0-1.0;   // 大尺度涌浪，破除平铺感
       vec3 n1=texture2D(uNormalA,p*0.012+vec2(uTime*0.010,uTime*0.006)).xyz*2.0-1.0;
       vec3 n2=texture2D(uNormalB,p*0.035-vec2(uTime*0.013,uTime*0.009)).xyz*2.0-1.0;
-      vec3 n3=texture2D(uNormalA,p*0.085+vec2(uTime*0.022,-uTime*0.018)).xyz*2.0-1.0;
       vec2 rp=ripple(p,uTime)*(0.30+0.70*uRain);
       vec3 n=normalize(vec3(
-        (n1.x*0.50+n2.x*0.33+n3.x*0.22)*hi+rp.x, 1.0,
-        (n1.y*0.50+n2.y*0.33+n3.y*0.22)*hi+rp.y));
+        (n0.x*0.40+n1.x*0.34+n2.x*0.20)*hi+rp.x, 1.0,
+        (n0.y*0.40+n1.y*0.34+n2.y*0.20)*hi+rp.y));
       vec3 V=normalize(cameraPosition-vWorld);
       float fres=pow(1.0-clamp(dot(V,n),0.0,1.0),4.0);
-      fres=mix(0.03,0.75,fres);
+      fres=mix(0.03,0.72,fres);
       vec3 refl;
       if(uHasRefl>0.5){
         vec4 uv4=uTexMatrix*vec4(vWorld,1.0);
@@ -79,14 +73,17 @@ window.Water = (function () {
       }
       vec3 baseC=mix(uShallow,uDeep,clamp(0.45+n.x*0.18,0.0,1.0));
       baseC=mix(baseC,uSilt,1.0-smoothstep(0.5,7.0,abs(sd)));
-      vec3 col=mix(baseC,refl,clamp(fres,0.0,0.85));
+      vec3 col=mix(baseC,refl,clamp(fres,0.0,0.82));
       vec3 Hv=normalize(uSunDir+V);
-      col+=vec3(0.88,0.93,0.95)*pow(max(dot(n,Hv),0.0),60.0)*0.10;
+      /* 镜面高光：随距离衰减 + 收紧阈值，消除湖面成片亮斑 */
+      col+=vec3(0.88,0.93,0.95)*pow(max(dot(n,Hv),0.0),140.0)*0.055*hi*(0.35+0.65*uSunI);
       float foamN=texture2D(uFoamTex,p*0.045+vec2(uTime*0.012,uTime*0.007)).r;
       float shoreFoam=(1.0-smoothstep(0.4,uFoamW,abs(sd)))*(0.40+0.60*foamN)*(0.55+0.45*sin(uTime*1.4+sd*2.2+p.x*0.045));
       float wf=wakeFoam(p);
       float foam=clamp(shoreFoam*0.75+wf*1.25,0.0,1.0);
-      col=mix(col,vec3(0.87,0.91,0.91),foam*0.72);
+      col=mix(col,vec3(0.87,0.91,0.91)*(0.28+0.72*uSunI),foam*0.72);
+      /* 水面不受场景光照，随昼夜手动压暗/提亮 */
+      col*=(0.30+0.70*uSunI);
       float f=1.0-exp(-uFogDensity*uFogDensity*distToCam*distToCam);
       col=mix(col,uFog,clamp(f,0.0,1.0));
       gl_FragColor=vec4(col,vEdge);
@@ -99,6 +96,7 @@ window.Water = (function () {
     return {
       uTime: uTime,
       uFogDensity: { value: Wt.fogDensity },
+      uSunI: { value: 1 },
       uFoamW: { value: C.foam },
       uRain: { value: 1 },
       uHasRefl: { value: 0 },
@@ -174,7 +172,11 @@ window.Water = (function () {
             float r=distance(wp.xz,uCenter.xz);
             float edge=1.0-smoothstep(68.0,112.0,r);
             vec2 p=wp.xz;
-            float w=sin(p.x*0.13+uTime*1.5)*0.045+sin(p.y*0.11-uTime*1.2)*0.04+sin((p.x+p.y)*0.055+uTime*0.8)*0.05;
+            /* 流动波浪：多向行波叠加（有起伏、有方向感），边缘淡出防止穿帮 */
+            float w = sin(p.x*0.085+uTime*1.35)*0.075
+                    + sin(p.y*0.066-uTime*1.05)*0.065
+                    + sin((p.x*0.71+p.y)*0.045+uTime*0.75)*0.090
+                    + sin((p.x-p.y*0.83)*0.11-uTime*1.7)*0.030;
             wp.y+=w*edge;
             vWorld=wp.xyz; vEdge=edge;
             gl_Position=projectionMatrix*viewMatrix*wp;
@@ -263,6 +265,21 @@ window.Water = (function () {
 
   W.update = function (dt, camera, boats) {
     uTime.value += dt;
+    /* 昼夜同步：雾色/雾密度/日向/天色/高光强度随 Weather 实时插值 */
+    if (window.Weather && Weather.fogColor) {
+      const sync = m => {
+        if (!m) return;
+        m.uniforms.uFog.value.copy(Weather.fogColor);
+        m.uniforms.uFogDensity.value = Weather.fogDensity;
+        m.uniforms.uSunDir.value.copy(Weather.sunDir);
+        m.uniforms.uSunI.value = 0.15 + 0.85 * Weather.daylight;
+        if (m.uniforms.uZenith && Weather.sky) {
+          m.uniforms.uZenith.value.copy(Weather.sky.material.uniforms.uZenith.value);
+          m.uniforms.uHorizon.value.copy(Weather.sky.material.uniforms.uHorizon.value);
+        }
+      };
+      sync(baseMat); sync(patchMat);
+    }
     if (boats) W.setBoats(boats);
     if (patch) {
       const b = boats && boats[0];

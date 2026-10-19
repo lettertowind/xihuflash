@@ -6,29 +6,56 @@ window.Weather = (function () {
   const mists = [];
 
   W.sunDir = null;
+  W.dayT = 0;              // 0=日出 0.25=正午 0.5=日落 0.75=午夜
+  W.daylight = 1;          // 0..1 环境亮度
+  W.fogColor = null;       // 当前雾色（水面/其他模块实时取用）
+  W.fogDensity = 0;
+
+  let hemi, sun, fill, amb, skyMat = null, _scene = null, _renderer = null, _bg = null;
+  const PAL = {};          // 昼/夜色板（THREE.Color）
+  const tmpC = new THREE.Color();
+
+  function buildPalette(C) {
+    const N = C.night;
+    PAL.fogD = new THREE.Color(C.fog);          PAL.fogN = new THREE.Color(N.fog);
+    PAL.zenD = new THREE.Color(C.zenith);       PAL.zenN = new THREE.Color(N.zenith);
+    PAL.midD = new THREE.Color(C.mid);          PAL.midN = new THREE.Color(N.mid);
+    PAL.horD = new THREE.Color(C.horizon);      PAL.horN = new THREE.Color(N.horizon);
+    PAL.clLD = new THREE.Color(C.cloudLight);   PAL.clLN = new THREE.Color(N.cloudLight);
+    PAL.clDD = new THREE.Color(C.cloudDark);    PAL.clDN = new THREE.Color(N.cloudDark);
+    PAL.hsD = new THREE.Color(C.hemiSky);       PAL.hsN = new THREE.Color(N.hemiSky);
+    PAL.hgD = new THREE.Color(C.hemiGround);    PAL.hgN = new THREE.Color(N.hemiGround);
+    PAL.sunD = new THREE.Color(C.sunColor);     PAL.sunN = new THREE.Color(N.sunColor);
+  }
+  function lerpPair(out, d, n, k) { out.copy(d).lerp(n, k); }
 
   W.build = function (scene, renderer, tier) {
     const C = CFG.weather;
+    buildPalette(C);
+    _scene = scene; _renderer = renderer; _bg = scene.background;
+    W.dayT = C.dayStart;
 
     scene.fog = new THREE.FogExp2(C.fog, C.fogDensity);
     scene.background = new THREE.Color(C.fog);
+    W.fogColor = scene.fog.color;
+    W.fogDensity = C.fogDensity;
 
     // ---- 光照 ----
-    const hemi = new THREE.HemisphereLight(C.hemiSky, C.hemiGround, C.hemiIntensity);
+    hemi = new THREE.HemisphereLight(C.hemiSky, C.hemiGround, C.hemiIntensity);
     scene.add(hemi);
     const sunDir = new THREE.Vector3(C.sunDir[0], C.sunDir[1], C.sunDir[2]).normalize();
     W.sunDir = sunDir;
-    const sun = new THREE.DirectionalLight(C.sunColor, C.sunIntensity);
+    sun = new THREE.DirectionalLight(C.sunColor, C.sunIntensity);
     sun.position.copy(sunDir).multiplyScalar(1000);
     scene.add(sun);
-    const fill = new THREE.DirectionalLight(C.fillColor, C.fillIntensity);
+    fill = new THREE.DirectionalLight(C.fillColor, C.fillIntensity);
     fill.position.set(500, 380, 700);
     scene.add(fill);
-    const amb = new THREE.AmbientLight(0x85908c, 0.55);        // 背光坡面兜底，杜绝纯黑
+    amb = new THREE.AmbientLight(0x85908c, 0.55);        // 背光坡面兜底，杜绝纯黑
     scene.add(amb);
 
     // ---- 天空球 ----
-    const skyMat = new THREE.ShaderMaterial({
+    skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
       uniforms: {
         uZenith: { value: new THREE.Color(C.zenith) },
@@ -140,8 +167,50 @@ window.Weather = (function () {
     }
   };
 
+  /* 昼夜推进 + 全局光色插值（一昼夜 = CFG.weather.dayLength 秒） */
   W.update = function (dt, camera) {
+    const C = CFG.weather;
     uTime.value += dt;
+
+    // ---- 昼夜相位 ----
+    W.dayT = (W.dayT + dt / C.dayLength) % 1;
+    const ang = W.dayT * Math.PI * 2;                  // 0=日出
+    const sunH = Math.sin(ang);                        // 太阳高度
+    W.daylight = UTIL.smoothstep(-0.08, 0.22, sunH);
+    const nightK = 1 - W.daylight;
+
+    // 太阳/月亮方位：东升西落
+    const az = C.sunDir[0] + Math.cos(ang) * 0.5;
+    const elev = Math.max(0.06, sunH * 0.62 + 0.10);
+    W.sunDir.set(az, elev, C.sunDir[2]).normalize();
+    if (sun) sun.position.copy(W.sunDir).multiplyScalar(1000);
+
+    // 光强：昼全亮 / 夜月色微光
+    const smoothD = W.daylight;
+    if (hemi) { hemi.intensity = 0.22 + 1.18 * smoothD; lerpPair(hemi.color, PAL.hsD, PAL.hsN, nightK); hemi.groundColor.copy(tmpC.copy(PAL.hgD).lerp(PAL.hgN, nightK)); }
+    if (sun) { sun.intensity = 0.14 + 0.91 * smoothD; sun.color.copy(tmpC.copy(PAL.sunD).lerp(PAL.sunN, nightK)); }
+    if (fill) fill.intensity = 0.08 + 0.52 * smoothD;
+    if (amb) amb.intensity = 0.14 + 0.41 * smoothD;
+
+    // 雾与背景
+    if (W.fogColor) lerpPair(W.fogColor, PAL.fogD, PAL.fogN, nightK);
+    W.fogDensity = C.fogDensity + (C.nightFogDensity - C.fogDensity) * nightK;
+    if (_scene && _scene.fog) _scene.fog.density = W.fogDensity;
+    if (_bg && _bg.isColor) _bg.copy(W.fogColor);
+    // 夜间曝光压暗（环境贴图反光同步变暗，更真实）
+    if (_renderer) _renderer.toneMappingExposure = CFG.render.exposure * (0.62 + 0.38 * smoothD);
+
+    // 天空球色板
+    if (skyMat) {
+      lerpPair(skyMat.uniforms.uZenith.value, PAL.zenD, PAL.zenN, nightK);
+      lerpPair(skyMat.uniforms.uMid.value, PAL.midD, PAL.midN, nightK);
+      lerpPair(skyMat.uniforms.uHorizon.value, PAL.horD, PAL.horN, nightK);
+      lerpPair(skyMat.uniforms.uCloudLight.value, PAL.clLD, PAL.clLN, nightK);
+      lerpPair(skyMat.uniforms.uCloudDark.value, PAL.clDD, PAL.clDN, nightK);
+    }
+
+    // 夜间云更暗：利用现有 shader（色板已插值），无需改 shader
+
     if (rain && camera) {
       const cx = Math.round(camera.position.x / 10) * 10;
       const cz = Math.round(camera.position.z / 10) * 10;
@@ -155,6 +224,11 @@ window.Weather = (function () {
       if (m.s.position.y > 44) m.s.position.y = 8;
       if (m.s.position.y < 6) m.s.position.y = 40;
     }
+  };
+
+  /* 船灯开关系数：昼光充足→0（关），昏暗→1（开），带 0.08 过渡 */
+  W.lampK = function () {
+    return 1 - UTIL.smoothstep(CFG.weather.lampOn - 0.06, CFG.weather.lampOn + 0.06, W.daylight);
   };
 
   W.setRainCount = function (n) {

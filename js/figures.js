@@ -89,7 +89,10 @@ window.Figures = (function () {
   /* ---------------- 桶 ---------------- */
   const BODY_KEYS = ['robe', 'gown', 'femA', 'femB', 'child'];
   const HEAD_KEYS = ['putou', 'dongpo', 'hat', 'bun'];
-  const SONG_PALETTE = [0x3a5a6e, 0x6e5a3a, 0x8c6a76, 0xc9c4b4, 0x8a3a34, 0x7a7a44, 0x2f3440, 0x4e6e5a, 0x9a6a4a];
+  const SONG_PALETTE = [
+    0x3a5a6e, 0x6e5a3a, 0x8c6a76, 0xc9c4b4, 0x8a3a34, 0x7a7a44, 0x2f3440, 0x4e6e5a, 0x9a6a4a,
+    0xb0885a, 0x5d4a66, 0x93343f, 0x34545a, 0xc2a25a, 0x845833, 0x6a7a52, 0x734d6a, 0x43554e
+  ];
 
   function mkBucket(key, geo, mat) {
     buckets[key] = { im: null, mat, geo, list: [] };
@@ -151,10 +154,14 @@ window.Figures = (function () {
   }
 
   function addPerson(def, mover, extra) {
+    const base = def.age === 'elder' ? 0.94 : def.age === 'young' ? 0.97 : 1.0;
     const p = Object.assign({
       bi: def.body, hi: def.head, prop: def.prop,
       mode: 'WALK', t: Math.random() * 8, phase: Math.random() * 7,
-      scale: def.age === 'elder' ? 0.94 : def.age === 'young' ? 0.97 : 1.0,
+      /* 高矮胖瘦：整体缩放 + 横向胖瘦 + 纵向高矮三轴独立抖动 */
+      scale: base * (0.88 + Math.random() * 0.28),
+      fat: 0.88 + Math.random() * 0.30,
+      tall: 0.93 + Math.random() * 0.16,
       speed: 0.55 + Math.random() * 0.5,
       colorHex: SONG_PALETTE[(Math.random() * SONG_PALETTE.length) | 0],
       next: 4 + Math.random() * 12, partner: -1, dist2: 0
@@ -225,7 +232,7 @@ window.Figures = (function () {
     for (const nm in course.causeways) {
       for (const line of course.causeways[nm]) {
         const L2 = polyLen(line);
-        const n = Math.max(2, Math.round(L2 / 260));
+        const n = Math.max(2, Math.round(L2 / 170));
         for (let i = 0; i < n && total < fc.walk; i++) {
           const def = pickOutfit(Math.random() < 0.44);
           addPerson(def, { path: line, cum: cumLen(line), s: Math.random() * L2, dir: Math.random() < 0.5 ? 1 : -1, y: 1.78, scene: 'causeway' }, { mode: Math.random() < 0.8 ? 'WALK' : 'IDLE' });
@@ -236,7 +243,7 @@ window.Figures = (function () {
     let placed = 0;
     const left = fc.walk - total;
     for (let i = 0; i < course.water.length && placed < left; i += 2) {
-      if (Math.random() > 0.22) continue;
+      if (Math.random() > 0.34) continue;
       const p0 = course.water[i], p1 = course.water[(i + 1) % course.water.length];
       const dx = p1[0] - p0[0], dz = p1[1] - p0[1], dl = Math.hypot(dx, dz) || 1;
       const nx = -dz / dl, nz = dx / dl;
@@ -406,7 +413,7 @@ window.Figures = (function () {
         eul.set(0, yaw, roll + lean, 'YXZ');
         q.setFromEuler(eul);
         pv.set(x, p.y + bob + jumpY, z);
-        sv.set(p.scale, p.scale, p.scale);
+        sv.set(p.scale * p.fat, p.scale * p.tall, p.scale * p.fat);
         mBody.compose(pv, q, sv);
       }
 

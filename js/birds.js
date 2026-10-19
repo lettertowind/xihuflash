@@ -110,7 +110,7 @@ window.Birds = (function () {
         const p = course.water[(k * 97) % course.water.length];
         curves.push(loop(p[0], p[1], 90 + Math.random() * 160, 14, 0.5));
       }
-      addSpecies('egret', bc.egret, curves, 8, 20, 6, 9);
+      addSpecies('egret', bc.egret, curves, 16, 34, 4, 6);
     })();
 
     /* 家燕：湖心群飞掠水 */
@@ -122,7 +122,7 @@ window.Birds = (function () {
         const cx = c0[0] + (Math.random() - 0.5) * 500, cz = c0[1] + (Math.random() - 0.5) * 500;
         curves.push(loop(cx, cz, 60 + Math.random() * 130, 16, 0.7));
       }
-      addSpecies('swallow', bc.swallow, curves, 1.5, 6, 14, 19);
+      addSpecies('swallow', bc.swallow, curves, 7, 15, 9, 12.5);
     })();
 
     /* 野鸭：贴水小环（湖心亭/三潭一带） */
@@ -138,7 +138,7 @@ window.Birds = (function () {
         const c0 = centers[k % centers.length];
         curves.push(loop(c0[0] + (Math.random() - 0.5) * 120, c0[1] + (Math.random() - 0.5) * 120, 40 + Math.random() * 60, 12, 0.5));
       }
-      addSpecies('duck', bc.duck, curves, 0.4, 1.4, 6, 8.5);
+      addSpecies('duck', bc.duck, curves, 2.0, 5.0, 4, 5.8);
     })();
 
     function L2L(nm) { return (window.Landmarks && Landmarks.list) ? Landmarks.list.find(l => l.name === nm) : null; }

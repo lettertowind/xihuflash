@@ -63,7 +63,9 @@ window.Traffic = (function () {
         grp, t: t0, ci, dir, kind: kd.kind, r: kd.r, w: kd.w,
         speed: kd.speed * (0.8 + rr() * 0.45),
         x: 0, z: 0, heading: 0, bob: Math.random() * 7,
-        slow: 1, oar: mdl.oar, phase: Math.random() * 6, hidden: false
+        slow: 1, oar: mdl.oar, phase: Math.random() * 6, hidden: false,
+        lamps: mdl.lamps || null,
+        dead: false, deadT: 0, flyX: 0, flyZ: 0, rollV: 0, deadRoll: 0, yawSpin: 0, sinkY: 0
       });
     }
 
@@ -107,7 +109,7 @@ window.Traffic = (function () {
         nearCd = 4;
         const fx = Math.cos(player.heading), fz = Math.sin(player.heading);
         for (const b of boats) {
-          if (b.static) continue;
+          if (b.static || b.dead) continue;
           const d = Math.hypot(b.x - player.x, b.z - player.z);
           if (d > 0 && d < 2600) continue;
           const curve = curves[b.ci];
@@ -129,7 +131,7 @@ window.Traffic = (function () {
     }
 
     for (const b of boats) {
-      if (!b.static) {
+      if (!b.static && !b.dead) {
         // 前进
         const curve = curves[b.ci];
         const len = curve.getLength();
@@ -160,6 +162,22 @@ window.Traffic = (function () {
           b.phase += dt * 2.4;
           b.oar.rotation.y = Math.sin(b.phase) * 0.24;
         }
+      } else if (b.dead) {
+        /* 被撞翻：夸张飞出 + 侧倾倾覆 + 下沉，数秒后复位重生 */
+        b.deadT += dt;
+        b.x += b.flyX * dt; b.z += b.flyZ * dt;
+        const dec = Math.exp(-dt * 1.5);
+        b.flyX *= dec; b.flyZ *= dec; b.yawSpin *= dec;
+        b.deadRoll += b.rollV * dt;
+        const maxRoll = 1.95;                       // ≈112° 倾覆
+        if (b.deadRoll > maxRoll) { b.deadRoll = maxRoll; b.rollV *= 0.35; }
+        if (b.deadRoll < -maxRoll) { b.deadRoll = -maxRoll; b.rollV *= 0.35; }
+        b.heading += b.yawSpin * dt;
+        b.sinkY = Math.min(2.3, Math.max(0, (b.deadT - 1.1) * 0.95));
+        if (b.deadT > 6.5) {                        // 重生：回到环线随机点
+          b.dead = false; b.deadT = 0; b.deadRoll = 0; b.sinkY = 0; b.rollV = 0; b.yawSpin = 0;
+          b.t = Math.random();
+        }
       }
       // 距离剔除
       const dP = Math.hypot(b.x - player.x, b.z - player.z);
@@ -167,26 +185,52 @@ window.Traffic = (function () {
       if (hide !== b.hidden) { b.hidden = hide; b.grp.visible = !hide; }
       if (!hide) {
         b.bob += dt;
-        b.grp.position.set(b.x, Math.sin(b.bob * 1.4 + b.phase) * 0.035, b.z);
-        b.grp.rotation.set(Math.sin(b.bob * 1.1) * 0.012, -b.heading, Math.sin(b.bob * 0.9) * 0.015);
+        const bobY = Math.sin(b.bob * 1.4 + b.phase) * 0.035;
+        if (b.dead) {
+          b.grp.position.set(b.x, bobY - b.sinkY, b.z);
+          b.grp.rotation.set(-0.14, -b.heading, b.deadRoll);
+        } else {
+          b.grp.position.set(b.x, bobY, b.z);
+          b.grp.rotation.set(Math.sin(b.bob * 1.1) * 0.012, -b.heading, Math.sin(b.bob * 0.9) * 0.015);
+        }
+        // 船灯随昼夜
+        if (b.lamps && window.Weather && Weather.lampK) {
+          const k = Weather.lampK();
+          if (k > 0) BoatModel.setLamps(b, k, 0.9 + 0.1 * Math.sin(b.bob * 8.1 + b.phase));
+        }
       }
       // 与玩家碰撞
-      if (dP < b.r + 2.7) {
+      if (dP < b.r + 2.7 && !b.dead) {
         const nx = (player.x - b.x) / (dP || 1), nz = (player.z - b.z) / (dP || 1);
         const push = (b.r + 2.7 - dP);
         player.x += nx * push * 0.85;
         player.z += nz * push * 0.85;
         // 速度损失与转向偏移
         const relHead = Math.abs(((player.heading - Math.atan2(player.z - b.z, player.x - b.x)) % Math.PI) - Math.PI / 2);
-        const damp = 0.25 + 0.4 * Math.min(1, Math.abs(player.speed) / 40);
+        const relSp = Math.abs(player.speed);
+        const damp = 0.25 + 0.4 * Math.min(1, relSp / 40);
         player.speed *= (1 - damp * 0.75);
         if (player.hitCool <= 0) {
-          player.shake = Math.min(1, player.shake + 0.65);
           player.collisions++;
           player.hitCool = 0.5;
-          impact = Math.max(impact, damp);
+          if (relSp > 13) {
+            /* 高速撞击：主船剧烈震颤，对方夸张飞出倾覆沉没 + 惊呼 */
+            player.shake = Math.min(1.7, player.shake + 0.9 + relSp * 0.016);
+            impact = 1;
+            if (!b.static) {
+              b.dead = true; b.deadT = 0; b.deadRoll = 0; b.sinkY = 0;
+              const pw = 3.2 + relSp * 0.3;
+              b.flyX = -nx * pw; b.flyZ = -nz * pw;
+              b.rollV = (Math.random() < 0.5 ? -1 : 1) * (1.5 + Math.random() * 1.2);
+              b.yawSpin = (Math.random() - 0.5) * 3.2;
+            }
+            try { AudioFX.scream(Math.random() < 0.5); } catch (e) { }
+          } else {
+            player.shake = Math.min(1, player.shake + 0.65);
+            impact = Math.max(impact, damp);
+          }
         }
-        if (!b.static && b.speed) b.t = (b.t - Math.sign(b.dir) * 0.0015 + 1) % 1;
+        if (!b.static && b.speed && !b.dead) b.t = (b.t - Math.sign(b.dir) * 0.0015 + 1) % 1;
       }
     }
     return impact;

@@ -115,6 +115,32 @@ window.AudioFX = (function () {
       o.connect(g); g.connect(master); o.start(); o.stop(ctx.currentTime + 0.38);
     } catch (e) { }
   };
+
+  /* 惊呼声：男女声各一（基频滑落 + 颤音 + 共鸣滤波），翻船时随机播放 */
+  A.scream = function (male) {
+    if (!A.ready || A.muted) return;
+    try {
+      const t = ctx.currentTime;
+      const f0 = male ? 340 : 620;                 // 男低 / 女高
+      const o = ctx.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(f0 * 1.28, t);
+      o.frequency.exponentialRampToValueAtTime(f0 * 0.72, t + 0.55);
+      // 颤音
+      const vib = ctx.createOscillator(); vib.frequency.value = male ? 6.2 : 7.8;
+      const vibG = ctx.createGain(); vibG.gain.value = f0 * 0.055;
+      vib.connect(vibG); vibG.connect(o.frequency);
+      // 共鸣（近似口腔：双带通）
+      const bp1 = ctx.createBiquadFilter(); bp1.type = 'bandpass'; bp1.frequency.value = male ? 620 : 980; bp1.Q.value = 3.2;
+      const bp2 = ctx.createBiquadFilter(); bp2.type = 'bandpass'; bp2.frequency.value = male ? 1180 : 1900; bp2.Q.value = 4.5;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.11, t + 0.06);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.62);
+      o.connect(bp1); bp1.connect(bp2); bp2.connect(g); g.connect(master);
+      o.start(t); o.stop(t + 0.68);
+      vib.start(t); vib.stop(t + 0.68);
+    } catch (e) { }
+  };
   A.whoosh = function () {
     if (!A.ready || A.muted || !boostGain) return;
     try {

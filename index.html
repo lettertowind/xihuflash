@@ -154,16 +154,19 @@
   /* ---------------- 触屏 ---------------- */
   #touch { position: absolute; inset: 0; display: none; pointer-events: none; }
   body.touch #touch { display: block; }
-  #stick { position: absolute; left: 30px; bottom: 92px; width: 116px; height: 116px; border-radius: 50%;
-    border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.05); pointer-events: auto; }
-  #stick .knob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
+  #stick { position: absolute; left: max(22px, env(safe-area-inset-left)); bottom: calc(84px + env(safe-area-inset-bottom)); width: 124px; height: 124px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.05); pointer-events: auto; touch-action: none; }
+  #stick .knob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
     background: rgba(238,242,236,.35); border: 1px solid rgba(255,255,255,.5); }
-  #pedals { position: absolute; right: 26px; bottom: 120px; display: flex; gap: 12px; pointer-events: auto; }
-  .pedal { width: 76px; height: 76px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
-    background: rgba(255,255,255,.07); display: flex; align-items: center; justify-content: center; font-size: 11px; letter-spacing: .14em; }
+  #pedals { position: absolute; right: max(20px, env(safe-area-inset-right)); bottom: calc(112px + env(safe-area-inset-bottom)); display: flex; gap: 14px; pointer-events: auto; }
+  .pedal { width: 84px; height: 84px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
+    background: rgba(255,255,255,.07); display: flex; align-items: center; justify-content: center; font-size: 12px; letter-spacing: .14em;
+    touch-action: none; -webkit-tap-highlight-color: transparent; user-select: none; }
   .pedal.on { background: rgba(168,208,192,.35); border-color: rgba(168,208,192,.7); }
   .pedal.boost { border-color: rgba(255,196,110,.5); color: #ffe0b0; }
-  #touchhint { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); font-size: 10px; letter-spacing: .18em; opacity: .35; }
+  #touchhint { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 10px; letter-spacing: .18em; opacity: .35; }
+  #scene { touch-action: none; -webkit-tap-highlight-color: transparent; }
+  body.touch #hint { display: none; }
 
   @media (max-width: 760px) {
     #mini { width: 122px; padding: 8px; } #minimap { width: 104px; height: 104px; }

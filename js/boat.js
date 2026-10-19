@@ -5,11 +5,16 @@ window.Boat = (function () {
   B.create = function (scene, tier) {
     const C = CFG.boat, N = CFG.nitro;
     const group = new THREE.Group();
-    const model = BoatModel.build('wupeng');
+    const model = BoatModel.build('wupeng', 7, { headLamp: true });
     group.add(model.group);
     scene.add(group);
     const oar = model.oar;
     let oarPhase = 0;
+
+    /* 主船大灯：唯一真实点光源（照亮沿岸景物便于观赏），随环境亮度自动开关 */
+    const headLight = new THREE.PointLight(0xffcf96, 0, 85, 2);
+    headLight.position.set(4.0, 1.6, 0.58);
+    group.add(headLight);
 
     /* 尾迹 */
     const MAXW = 240;
@@ -141,7 +146,7 @@ window.Boat = (function () {
         if (!slid) { state.speed *= 0.22; }
         else { state.speed *= 0.55; }
         if (state.hitCool <= 0) {
-          state.shake = Math.min(1, state.shake + 0.8);
+          state.shake = Math.min(1.7, state.shake + 0.95);   // 剧烈震颤
           state.collisions++;
           state.hitCool = 0.5;
         }
@@ -236,6 +241,14 @@ window.Boat = (function () {
       sg.attributes.aA.needsUpdate = true;
 
       state.shake = Math.max(0, state.shake - dt * 1.8);
+
+      /* --- 船灯随昼夜自动开关（带烛火抖动） --- */
+      if (window.Weather && Weather.lampK) {
+        const k = Weather.lampK();
+        const flick = 0.92 + 0.08 * Math.sin(state.bob * 9.7) * Math.sin(state.bob * 4.3 + 1.7);
+        if (model.lamps) BoatModel.setLamps(model, k, flick);
+        headLight.intensity = k * flick * 2.6;
+      }
     };
 
     /* --- 第一人称相机（坐于敞开船头，支持环视观景） --- */
@@ -252,7 +265,8 @@ window.Boat = (function () {
       const eyeY = eye[1] + state.fovK * 0.18 + Math.min(0.07, sp * 0.0013);
       const ex = ch * eye[0] - sh * eye[2];
       const ez = sh * eye[0] + ch * eye[2];
-      const shake = state.shake * 0.85 + speedK * 0.05 + state.fovK * 0.05;
+      // 剧烈震颤：位置抖动有上限防穿模，叠加随机横滚
+      const shake = Math.min(0.62, state.shake * 0.42) + speedK * 0.05 + state.fovK * 0.05;
       const sx = (Math.random() - 0.5) * shake, sy = (Math.random() - 0.5) * shake * 0.7;
       const bob = Math.sin(state.bob * 1.9) * 0.034 + Math.sin(state.bob * 3.1) * 0.017;
 
@@ -272,6 +286,7 @@ window.Boat = (function () {
         state.z + fz * 42
       );
       camera.rotation.z += state.roll * 0.5 * (1 - Math.min(1, Math.abs(yaw) * 1.6));
+      if (state.shake > 0.2) camera.rotation.z += (Math.random() - 0.5) * state.shake * 0.05;
     };
 
     return B;

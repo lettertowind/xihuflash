@@ -6,7 +6,7 @@
   let last = 0, t0 = 0, raceTime = 0;
   let topSpeed = 0, visitedCount = 0, armed = false;
   let raceToken = 0;
-  let tier = null, frameMs = 16, emaMs = 16, lookT = 0;
+  let tier = null, frameMs = 16, emaMs = 16, lookT = 0, snapBack = false;
   let bestVisited = 0;
   try { bestVisited = parseInt(localStorage.getItem('westlake_visited_v2') || '0', 10) || 0; } catch (e) { bestVisited = 0; }
 
@@ -192,15 +192,17 @@
         if (e.pointerType === 'touch') {
           if (touchViewId === null) { touchViewId = e.pointerId; tX = e.clientX; tY = e.clientY; }
         } else if (e.button === 2) { dragging = true; lastPX = e.clientX; lastPY = e.clientY; }
+        else if (e.button === 0) { snapBack = true; }          // 桌面：左键点击立即回正
       });
     }
     window.addEventListener('pointermove', e => {
       if (!boat) return;
       if (e.pointerType === 'touch') {
-        // 手机：向左滑动屏幕，视角向左转
+        // 手机：向左滑动屏幕，视角向左转（与桌面鼠标同向）
         if (touchViewId === e.pointerId) {
-          boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw - (e.clientX - tX) * 0.0052, -2.6, 2.6);
-          boat.state.lookPitch = UTIL.clamp(boat.state.lookPitch - (e.clientY - tY) * 0.0036, -0.62, 0.62);
+          snapBack = false;
+          boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw + (e.clientX - tX) * 0.0052, -2.6, 2.6);
+          boat.state.lookPitch = UTIL.clamp(boat.state.lookPitch + (e.clientY - tY) * 0.0036, -0.62, 0.62);
           tX = e.clientX; tY = e.clientY;
           lookT = performance.now();
         }
@@ -209,13 +211,17 @@
       // 桌面：鼠标移动即转视角（与右键拖动同向）
       const dx = e.movementX !== undefined ? e.movementX : (lastPX ? e.clientX - lastPX : 0);
       const dy = e.movementY !== undefined ? e.movementY : (lastPY ? e.clientY - lastPY : 0);
+      if (dx || dy) snapBack = false;
       boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw + dx * 0.0026, -2.6, 2.6);
       boat.state.lookPitch = UTIL.clamp(boat.state.lookPitch - dy * 0.0022, -0.62, 0.62);
       lastPX = e.clientX; lastPY = e.clientY;
       lookT = performance.now();
     });
     window.addEventListener('pointerup', e => {
-      if (e.pointerType === 'touch' && touchViewId === e.pointerId) touchViewId = null;
+      if (e.pointerType === 'touch' && touchViewId === e.pointerId) {
+        touchViewId = null;
+        snapBack = true;                                       // 手机：手指离开屏幕立即回正
+      }
       dragging = false;
     });
     window.addEventListener('contextmenu', e => e.preventDefault());
@@ -227,14 +233,18 @@
       const knob = stick.querySelector('.knob');
       let stickId = null;
       const setKnob = (dx, dy) => {
-        const r = 42;
+        const r = 52;
         const l = Math.min(r, Math.hypot(dx, dy));
         const a = Math.atan2(dy, dx);
         if (knob) knob.style.transform = 'translate(' + Math.cos(a) * l + 'px,' + Math.sin(a) * l + 'px)';
-        touch.steer = clamp(dx / 40, -1, 1);
+        touch.steer = clamp(dx / 44, -1, 1);
       };
-      stick.addEventListener('pointerdown', e => { stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (err) { } setKnob(e.offsetX - 58, e.offsetY - 58); });
-      stick.addEventListener('pointermove', e => { if (stickId === e.pointerId) setKnob(e.offsetX - 58, e.offsetY - 58); });
+      const stickCenter = e => {
+        const rc = stick.getBoundingClientRect();
+        return [e.clientX - rc.left - rc.width / 2, e.clientY - rc.top - rc.height / 2];
+      };
+      stick.addEventListener('pointerdown', e => { stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (err) { } const c = stickCenter(e); setKnob(c[0], c[1]); });
+      stick.addEventListener('pointermove', e => { if (stickId === e.pointerId) { const c = stickCenter(e); setKnob(c[0], c[1]); } });
       const endStick = e => { if (stickId === e.pointerId) { stickId = null; touch.steer = 0; if (knob) knob.style.transform = 'translate(0,0)'; } };
       stick.addEventListener('pointerup', endStick);
       stick.addEventListener('pointercancel', endStick);
@@ -334,12 +344,15 @@
       if (kQ || kE) {
         boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw + (kE ? 1 : -1) * dt * 1.5, -2.6, 2.6);
         lookT = performance.now();
-      } else if (performance.now() - lookT > 2600) {
-        const k = Math.exp(-dt * 1.7);
+      } else if (snapBack || performance.now() - lookT > 2600) {
+        const k = Math.exp(-dt * (snapBack ? 5.5 : 1.7));
         boat.state.lookYaw *= k;
         boat.state.lookPitch *= k;
-        if (Math.abs(boat.state.lookYaw) < 0.001) boat.state.lookYaw = 0;
-        if (Math.abs(boat.state.lookPitch) < 0.001) boat.state.lookPitch = 0;
+        if (Math.abs(boat.state.lookYaw) < 0.001 && Math.abs(boat.state.lookPitch) < 0.001) {
+          boat.state.lookYaw = 0;
+          boat.state.lookPitch = 0;
+          snapBack = false;
+        }
       }
     }
 
