@@ -1,278 +1,240 @@
-/* 程序化贴图与通用工具：不依赖任何外部图片，file:// 直接可用 */
-(function () {
+/* 基础工具：数学、噪声、几何、画布 */
+window.UTIL = (function () {
   const U = {};
 
   U.clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   U.lerp = (a, b, t) => a + (b - a) * t;
-  U.smooth = t => t * t * (3 - 2 * t);
+  U.smoothstep = (a, b, x) => {
+    const t = U.clamp((x - a) / (b - a || 1e-6), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  U.easeOut = t => 1 - Math.pow(1 - t, 3);
+  U.deg = r => r * 180 / Math.PI;
 
-  let seed = 20261018;
-  U.rand = function () { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  /* 确定性随机 */
+  U.rng = function (seed) {
+    let s = (seed >>> 0) || 1;
+    return function () {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+  };
 
+  /* 2D 值噪声 + fbm */
+  function hash2(ix, iz) {
+    let h = Math.imul(ix | 0, 374761393) + Math.imul(iz | 0, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h = h ^ (h >>> 16);
+    return (h >>> 0) / 4294967295;
+  }
+  U.hash2 = hash2;
+  U.noise2 = function (x, z) {
+    const ix = Math.floor(x), iz = Math.floor(z);
+    const fx = x - ix, fz = z - iz;
+    const ux = fx * fx * (3 - 2 * fx), uz = fz * fz * (3 - 2 * fz);
+    const a = hash2(ix, iz), b = hash2(ix + 1, iz);
+    const c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+    return U.lerp(U.lerp(a, b, ux), U.lerp(c, d, ux), uz);
+  };
+  U.fbm = function (x, z, oct) {
+    let sum = 0, amp = 0.5, f = 1, norm = 0;
+    const n = oct || 4;
+    for (let i = 0; i < n; i++) {
+      sum += U.noise2(x * f, z * f) * amp;
+      norm += amp;
+      amp *= 0.5; f *= 2.03;
+    }
+    return sum / (norm || 1);
+  };
+
+  /* 画布 */
   U.canvas = function (w, h) {
-    const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
   };
-
-  U.tex = function (canvas, repeat, srgb) {
+  U.tex = function (canvas, opts) {
     const t = new THREE.CanvasTexture(canvas);
-    t.encoding = srgb === false ? THREE.LinearEncoding : THREE.sRGBEncoding;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    if (repeat) t.repeat.set(repeat[0], repeat[1]);
-    t.anisotropy = 4;
+    t.anisotropy = (opts && opts.aniso) || 4;
+    t.encoding = (opts && opts.srgb === false) ? THREE.LinearEncoding : THREE.sRGBEncoding;
+    if (opts && opts.repeat) t.repeat.set(opts.repeat[0], opts.repeat[1]);
+    if (opts && opts.wrap === 'clamp') { t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; }
+    t.needsUpdate = true;
     return t;
   };
 
-  /* ---------- 水面法线（可平铺） ---------- */
-  U.waterNormal = function (size) {
-    size = size || 256;
-    const c = U.canvas(size, size), ctx = c.getContext('2d');
-    const img = ctx.createImageData(size, size);
-    const waves = [];
-    for (let i = 0; i < 9; i++) {
-      waves.push({
-        fx: 1 + Math.floor(U.rand() * 5),
-        fy: 1 + Math.floor(U.rand() * 5),
-        p: U.rand() * 6.28,
-        a: 0.55 / (1 + i * 0.55)
-      });
-    }
-    const H = (u, v) => {
-      let h = 0;
-      for (const w of waves) h += Math.sin((u * w.fx + v * w.fy) * 6.283 + w.p) * w.a;
-      return h;
+  /* 由灰度图生成法线贴图 */
+  U.normalFromCanvas = function (src, strength) {
+    const w = src.width, h = src.height;
+    const sctx = src.getContext('2d');
+    const sd = sctx.getImageData(0, 0, w, h).data;
+    const out = U.canvas(w, h);
+    const octx = out.getContext('2d');
+    const od = octx.createImageData(w, h);
+    const k = strength || 1.6;
+    const lum = (x, y) => {
+      const i = (((y + h) % h) * w + ((x + w) % w)) * 4;
+      return (sd[i] * 0.299 + sd[i + 1] * 0.587 + sd[i + 2] * 0.114) / 255;
     };
-    const S = 0.55;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const u = x / size, v = y / size, e = 1 / size;
-        const dx = (H(u + e, v) - H(u - e, v)) * S;
-        const dy = (H(u, v + e) - H(u, v - e)) * S;
-        const l = Math.hypot(dx, dy, 1);
-        const i = (y * size + x) * 4;
-        img.data[i] = ((-dx / l) * 0.5 + 0.5) * 255;
-        img.data[i + 1] = ((-dy / l) * 0.5 + 0.5) * 255;
-        img.data[i + 2] = ((1 / l) * 0.5 + 0.5) * 255;
-        img.data[i + 3] = 255;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dx = (lum(x + 1, y) - lum(x - 1, y)) * k;
+        const dy = (lum(x, y - 1) - lum(x, y + 1)) * k;
+        let nx = -dx, ny = -dy, nz = 1;
+        const l = Math.hypot(nx, ny, nz) || 1;
+        nx /= l; ny /= l; nz /= l;
+        const i = (y * w + x) * 4;
+        od.data[i] = (nx * 0.5 + 0.5) * 255;
+        od.data[i + 1] = (ny * 0.5 + 0.5) * 255;
+        od.data[i + 2] = (nz * 0.5 + 0.5) * 255;
+        od.data[i + 3] = 255;
       }
     }
-    ctx.putImageData(img, 0, 0);
-    return U.tex(c, null, false);
+    octx.putImageData(od, 0, 0);
+    return out;
   };
 
-  /* ---------- 石岸 ---------- */
-  U.stone = function () {
-    const s = 256, c = U.canvas(s, s), ctx = c.getContext('2d');
-    ctx.fillStyle = '#8d8474'; ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < 2600; i++) {
-      const g = 120 + U.rand() * 70;
-      ctx.fillStyle = 'rgba(' + (g * 1.03) + ',' + g + ',' + (g * 0.9) + ',' + (0.05 + U.rand() * 0.16) + ')';
-      const r = 1 + U.rand() * 3.5;
-      ctx.beginPath(); ctx.arc(U.rand() * s, U.rand() * s, r, 0, 7); ctx.fill();
+  /* 多边形 */
+  U.pointInRing = function (x, z, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], zi = ring[i][1], xj = ring[j][0], zj = ring[j][1];
+      if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi)) inside = !inside;
     }
-    ctx.strokeStyle = 'rgba(70,64,54,.35)'; ctx.lineWidth = 1.4;
-    for (let y = 32; y < s; y += 32) {
-      ctx.beginPath(); ctx.moveTo(0, y + U.rand() * 2); ctx.lineTo(s, y + U.rand() * 2); ctx.stroke();
-      for (let x = 0; x < s; x += 44) {
-        ctx.beginPath(); ctx.moveTo(x + U.rand() * 6, y); ctx.lineTo(x + U.rand() * 6, y + 32); ctx.stroke();
+    return inside;
+  };
+  U.segDist = function (x, z, a, b) {
+    const vx = b[0] - a[0], vz = b[1] - a[1];
+    const wx = x - a[0], wz = z - a[1];
+    const L = vx * vx + vz * vz;
+    let t = L ? (wx * vx + wz * vz) / L : 0;
+    t = U.clamp(t, 0, 1);
+    return Math.hypot(x - (a[0] + vx * t), z - (a[1] + vz * t));
+  };
+  U.ringDist = function (x, z, ring) {
+    let d = Infinity;
+    for (let i = 1; i < ring.length; i++) {
+      d = Math.min(d, U.segDist(x, z, ring[i - 1], ring[i]));
+    }
+    return d;
+  };
+  U.ringLength = function (ring) {
+    let s = 0;
+    for (let i = 1; i < ring.length; i++) s += Math.hypot(ring[i][0] - ring[i - 1][0], ring[i][1] - ring[i - 1][1]);
+    return s;
+  };
+  U.ringArea = function (ring) {
+    let s = 0;
+    for (let i = 1; i < ring.length; i++) s += ring[i - 1][0] * ring[i][1] - ring[i][0] * ring[i - 1][1];
+    return s * 0.5;
+  };
+  U.nearestOnPolyline = function (x, z, line) {
+    let best = null, bd = Infinity;
+    for (let i = 1; i < line.length; i++) {
+      const a = line[i - 1], b = line[i];
+      const vx = b[0] - a[0], vz = b[1] - a[1];
+      const L = vx * vx + vz * vz;
+      let t = L ? ((x - a[0]) * vx + (z - a[1]) * vz) / L : 0;
+      t = U.clamp(t, 0, 1);
+      const px = a[0] + vx * t, pz = a[1] + vz * t;
+      const d = Math.hypot(x - px, z - pz);
+      if (d < bd) { bd = d; best = { x: px, z: pz, d, t, a, b }; }
+    }
+    return best;
+  };
+
+  /* 放样：rings 为若干等长截面点数组，每点 [x,y,z] */
+  U.loft = function (rings, opts) {
+    opts = opts || {};
+    const m = rings.length, n = rings[0].length;
+    const pos = [], uv = [], idx = [];
+    for (let i = 0; i < m; i++) {
+      for (let j = 0; j < n; j++) {
+        const p = rings[i][j];
+        pos.push(p[0], p[1], p[2]);
+        uv.push(j / (n - 1), i / (m - 1));
       }
     }
-    const g = ctx.createLinearGradient(0, 0, 0, s);
-    g.addColorStop(0, 'rgba(255,250,235,.10)'); g.addColorStop(1, 'rgba(30,40,30,.16)');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-    return U.tex(c);
-  };
-
-  /* ---------- 草地 ---------- */
-  U.grass = function () {
-    const s = 256, c = U.canvas(s, s), ctx = c.getContext('2d');
-    ctx.fillStyle = '#4e5f3a'; ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < 5200; i++) {
-      const t = U.rand();
-      ctx.fillStyle = 'rgba(' + (58 + t * 52) + ',' + (76 + t * 54) + ',' + (40 + t * 26) + ',' + (0.10 + U.rand() * 0.3) + ')';
-      ctx.fillRect(U.rand() * s, U.rand() * s, 1 + U.rand() * 2, 2 + U.rand() * 5);
-    }
-    for (let i = 0; i < 220; i++) {
-      ctx.fillStyle = 'rgba(' + (96 + U.rand() * 40) + ',' + (90 + U.rand() * 30) + ',' + (52 + U.rand() * 20) + ',.28)';
-      ctx.beginPath(); ctx.arc(U.rand() * s, U.rand() * s, 2 + U.rand() * 8, 0, 7); ctx.fill();
-    }
-    return U.tex(c);
-  };
-
-  /* ---------- 树（带 alpha） ---------- */
-  U.tree = function (kind) {
-    const S = 256, c = U.canvas(S, S), ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, S, S);
-    // 树干
-    ctx.strokeStyle = '#3b2c1e'; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(S * .5, S);
-    ctx.quadraticCurveTo(S * .49, S * .74, S * .5, S * .56);
-    ctx.lineWidth = 10; ctx.stroke();
-    ctx.strokeStyle = 'rgba(74,58,40,.9)'; ctx.lineWidth = 2.4;
-    ctx.beginPath(); ctx.moveTo(S * .5, S * .58); ctx.lineTo(S * .36, S * .46); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(S * .5, S * .58); ctx.lineTo(S * .65, S * .48); ctx.stroke();
-
-    if (kind === 'willow') {
-      // 柳条
-      for (let i = 0; i < 150; i++) {
-        const x0 = S * .5 + (U.rand() - .5) * 120;
-        const y0 = S * .22 + U.rand() * 70;
-        const x1 = x0 + (U.rand() - .5) * 90;
-        const y1 = y0 + 60 + U.rand() * 110;
-        ctx.strokeStyle = 'rgba(' + (86 + U.rand() * 34) + ',' + (116 + U.rand() * 32) + ',' + (54 + U.rand() * 20) + ',' + (.35 + U.rand() * .35) + ')';
-        ctx.lineWidth = .7 + U.rand() * .9;
-        ctx.beginPath(); ctx.moveTo(x0, y0);
-        ctx.quadraticCurveTo((x0 + x1) / 2 + (U.rand() - .5) * 26, (y0 + y1) / 2, x1, y1);
-        ctx.stroke();
-      }
-      // 叶点
-      for (let i = 0; i < 320; i++) {
-        const a = U.rand() * 6.283, r = Math.pow(U.rand(), .6) * 92;
-        const x = S * .5 + Math.cos(a) * r * 1.1;
-        const y = S * .34 + Math.sin(a) * r * .7;
-        const g = 78 + U.rand() * 48;
-        ctx.fillStyle = 'rgba(' + (g * .72) + ',' + g + ',' + (g * .52) + ',' + (.30 + U.rand() * .45) + ')';
-        ctx.beginPath(); ctx.ellipse(x, y, 1.4 + U.rand() * 2.6, 1 + U.rand() * 1.8, U.rand() * 3, 0, 7); ctx.fill();
-      }
-    } else {
-      // 香樟：密集小叶团
-      for (let i = 0; i < 520; i++) {
-        const a = U.rand() * 6.283;
-        const r = Math.pow(U.rand(), .55) * 94;
-        const x = S * .5 + Math.cos(a) * r * 1.08;
-        const y = S * .36 + Math.sin(a) * r * .74;
-        const g = 54 + U.rand() * 54;
-        const rr = g * (.52 + U.rand() * .18);
-        ctx.fillStyle = 'rgba(' + rr + ',' + g + ',' + (rr * .78) + ',' + (.32 + U.rand() * .5) + ')';
-        ctx.beginPath(); ctx.arc(x, y, 2 + U.rand() * 5.5, 0, 7); ctx.fill();
-      }
-      // 受光面
-      for (let i = 0; i < 120; i++) {
-        const a = -0.9 + U.rand() * 1.8, r = Math.pow(U.rand(), .7) * 80;
-        const x = S * .5 + Math.cos(a) * r, y = S * .34 + Math.sin(a) * r * .7;
-        ctx.fillStyle = 'rgba(' + (96 + U.rand() * 40) + ',' + (128 + U.rand() * 34) + ',' + (62 + U.rand() * 20) + ',.35)';
-        ctx.beginPath(); ctx.arc(x, y, 2 + U.rand() * 5, 0, 7); ctx.fill();
+    for (let i = 0; i < m - 1; i++) {
+      for (let j = 0; j < n - 1; j++) {
+        const a = i * n + j, b = a + 1, c = a + n, d = c + 1;
+        idx.push(a, c, b, b, c, d);
       }
     }
-    const t = new THREE.CanvasTexture(c);
-    t.anisotropy = 4; t.encoding = THREE.sRGBEncoding;
-    return t;
-  };
-
-  /* ---------- 荷叶 ---------- */
-  U.lotus = function () {
-    const s = 128, c = U.canvas(s, s), ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, s, s);
-    for (let i = 0; i < 9; i++) {
-      const x = 10 + U.rand() * 108, y = 10 + U.rand() * 108, r = 12 + U.rand() * 20;
-      ctx.fillStyle = 'rgba(' + (46 + U.rand() * 30) + ',' + (86 + U.rand() * 34) + ',' + (52 + U.rand() * 20) + ',.92)';
-      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-      ctx.strokeStyle = 'rgba(30,58,34,.4)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(x, y, r * .82, 0, 7); ctx.stroke();
-    }
-    const t = new THREE.CanvasTexture(c); t.anisotropy = 4; t.encoding = THREE.sRGBEncoding;
-    return t;
-  };
-
-  /* ---------- 云 ---------- */
-  U.cloud = function () {
-    const s = 256, c = U.canvas(s, s), ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, s, s);
-    for (let i = 0; i < 34; i++) {
-      const x = s * .18 + U.rand() * s * .64;
-      const y = s * .38 + U.rand() * s * .26;
-      const r = 18 + U.rand() * 52;
-      const g = ctx.createRadialGradient(x, y, 1, x, y, r);
-      g.addColorStop(0, 'rgba(255,248,236,.34)');
-      g.addColorStop(.6, 'rgba(255,242,226,.15)');
-      g.addColorStop(1, 'rgba(255,240,225,0)');
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-    }
-    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
-    return t;
-  };
-
-  /* ---------- 楼窗 ---------- */
-  U.windows = function () {
-    const s = 128, c = U.canvas(s, s), ctx = c.getContext('2d');
-    ctx.fillStyle = '#5d6b75'; ctx.fillRect(0, 0, s, s);
-    for (let y = 4; y < s; y += 9) for (let x = 4; x < s; x += 8) {
-      const on = U.rand() > .45;
-      ctx.fillStyle = on ? 'rgba(255,214,150,' + (.35 + U.rand() * .5) + ')' : 'rgba(40,52,62,.75)';
-      ctx.fillRect(x, y, 4, 5);
-    }
-    return U.tex(c);
-  };
-
-  /* ---------- 木甲板 ---------- */
-  U.wood = function () {
-    const s = 256, c = U.canvas(s, s), ctx = c.getContext('2d');
-    ctx.fillStyle = '#7a5231'; ctx.fillRect(0, 0, s, s);
-    for (let i = 0; i < 8; i++) {
-      const y = i * 32;
-      ctx.fillStyle = 'rgba(' + (92 + U.rand() * 26) + ',' + (62 + U.rand() * 20) + ',' + (36 + U.rand() * 12) + ',.5)';
-      ctx.fillRect(0, y + 1, s, 30);
-      ctx.strokeStyle = 'rgba(40,26,16,.45)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
-      for (let k = 0; k < 26; k++) {
-        ctx.strokeStyle = 'rgba(60,38,22,' + (.05 + U.rand() * .13) + ')';
-        ctx.beginPath();
-        const yy = y + 4 + U.rand() * 24;
-        ctx.moveTo(0, yy); ctx.bezierCurveTo(s * .3, yy + 2, s * .6, yy - 2, s, yy); ctx.stroke();
+    // 封口
+    const addCap = (ri, reverse) => {
+      const ring = rings[ri];
+      let cx = 0, cy = 0, cz = 0;
+      for (const p of ring) { cx += p[0]; cy += p[1]; cz += p[2]; }
+      cx /= n; cy /= n; cz /= n;
+      const base = pos.length / 3;
+      pos.push(cx, cy, cz);
+      uv.push(0.5, 0.5);
+      for (let j = 0; j < n; j++) {
+        const p = ring[j];
+        pos.push(p[0], p[1], p[2]);
+        uv.push(0.5 + Math.cos(j / n * 6.283) * 0.5, 0.5 + Math.sin(j / n * 6.283) * 0.5);
       }
-    }
-    return U.tex(c);
-  };
-
-  /* ---------- 水花 ---------- */
-  U.spray = function () {
-    const s = 64, c = U.canvas(s, s), ctx = c.getContext('2d');
-    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-    g.addColorStop(0, 'rgba(255,255,255,.95)');
-    g.addColorStop(.35, 'rgba(240,250,255,.55)');
-    g.addColorStop(1, 'rgba(230,245,255,0)');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
-    const t = new THREE.CanvasTexture(c); return t;
-  };
-
-  /* ---------- 岸边遮罩（给水面浪花用） ---------- */
-  U.shoreMask = function (course) {
-    const N = 1024;
-    let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
-    course.water.forEach(p => {
-      minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
-      minZ = Math.min(minZ, p[1]); maxZ = Math.max(maxZ, p[1]);
-    });
-    const pad = 200;
-    minX -= pad; maxX += pad; minZ -= pad; maxZ += pad;
-    const span = Math.max(maxX - minX, maxZ - minZ);
-    const sx = (maxX - minX) / span * N, sz = (maxZ - minZ) / span * N;
-
-    const c = U.canvas(N, N), ctx = c.getContext('2d');
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, N, N);
-    const X = x => (x - minX) / span * N;
-    const Y = z => (z - minZ) / span * N;
-
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    course.water.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])));
-    ctx.closePath(); ctx.fill();
-
-    ctx.fillStyle = '#000';
-    const punch = ring => {
-      ctx.beginPath();
-      ring.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])));
-      ctx.closePath(); ctx.fill();
+      for (let j = 0; j < n - 1; j++) {
+        if (reverse) idx.push(base, base + j + 2, base + j + 1);
+        else idx.push(base, base + j + 1, base + j + 2);
+      }
     };
-    course.islands.forEach(punch);
+    if (opts.capStart !== false) addCap(0, true);
+    if (opts.capEnd !== false) addCap(m - 1, false);
 
-    const blur = U.canvas(N, N), bctx = blur.getContext('2d');
-    bctx.filter = 'blur(7px)';
-    bctx.drawImage(c, 0, 0);
-    bctx.filter = 'none';
-    const t = new THREE.CanvasTexture(blur);
-    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-    return { tex: t, minX, minZ, span };
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
   };
 
-  window.UTIL = U;
+  /* 合并同材质几何体（自动转非索引） */
+  U.merge = function (geoms) {
+    const attr = ['position', 'normal', 'uv'];
+    const out = { position: [], normal: [], uv: [] };
+    for (let gi = 0; gi < geoms.length; gi++) {
+      let g = geoms[gi];
+      if (!g) continue;
+      if (g.index) g = g.toNonIndexed();
+      const posAttr = g.getAttribute('position');
+      if (!posAttr) continue;
+      const count = posAttr.count;
+      for (const k of attr) {
+        const comp = k === 'uv' ? 2 : 3;
+        const a = g.getAttribute(k);
+        if (a) {
+          const arr = a.array;
+          for (let i = 0; i < count * comp; i++) out[k].push(arr[i]);
+        } else {
+          for (let i = 0; i < count * comp; i++) out[k].push(k === 'uv' ? 0 : 0);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(out.position, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(out.normal, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(out.uv, 2));
+    return g;
+  };
+
+  U.tube = function (points, radius, tubular, radial) {
+    const pts = points.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+    const curve = new THREE.CatmullRomCurve3(pts);
+    return new THREE.TubeGeometry(curve, tubular || 24, radius, radial || 5, false);
+  };
+
+  U.box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  U.cyl = (rt, rb, h, seg) => new THREE.CylinderGeometry(rt, rb, h, seg || 12);
+
+  U.mulColor = function (hex, k) {
+    const c = new THREE.Color(hex);
+    c.multiplyScalar(k);
+    return c;
+  };
+
+  return U;
 })();

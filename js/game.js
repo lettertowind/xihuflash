@@ -1,15 +1,14 @@
-/* 主循环：输入、进度、检查点、计时、结算 */
+/* 主控：输入、自由探索、探访判定、计时结算（Windows 启动修复版） */
 (function () {
   const C = window.COURSE;
   let scene, camera, renderer, world, boat;
   let state = 'loading';
-  let last = 0, t0 = 0, elapsed = 0, raceTime = 0;
-  let progIdx = 0, nextGate = 0, gatesPassed = 0, collisions = 0;
-  let splits = [], splitIdx = 0, topSpeed = 0;
-  let finishAt = 0, lastS = 0, wrongTimer = 0;
+  let last = 0, t0 = 0, raceTime = 0;
+  let topSpeed = 0, visitedCount = 0, armed = false;
   let raceToken = 0;
-  let best = 0;
-  try { best = parseFloat(localStorage.getItem('westlake_best_v1') || '0') || 0; } catch (e) { best = 0; }
+  let tier = null, frameMs = 16, emaMs = 16, lookT = 0;
+  let bestVisited = 0;
+  try { bestVisited = parseInt(localStorage.getItem('westlake_visited_v2') || '0', 10) || 0; } catch (e) { bestVisited = 0; }
 
   const keys = {};
   const input = { throttle: 0, steer: 0, boost: false };
@@ -18,175 +17,230 @@
   const $ = id => document.getElementById(id);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  /* ---------------- 几何判定 ---------------- */
-  function inRing(x, z, ring) {
-    let inside = false;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const xi = ring[i][0], zi = ring[i][1], xj = ring[j][0], zj = ring[j][1];
-      if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi)) inside = !inside;
+  /* ---------------- 渲染器三级回退 ---------------- */
+  function makeRenderer(canvas) {
+    const opts = [
+      { antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false, preserveDrawingBuffer: true },
+      { antialias: false, powerPreference: 'high-performance', alpha: false, preserveDrawingBuffer: true },
+      { antialias: false, alpha: false, preserveDrawingBuffer: true }
+    ];
+    let lastErr = null;
+    for (const o of opts) {
+      try { return new THREE.WebGLRenderer(Object.assign({ canvas }, o)); }
+      catch (e) { lastErr = e; }
     }
-    return inside;
-  }
-  function segD(x, z, a, b) {
-    const vx = b[0] - a[0], vz = b[1] - a[1];
-    const wx = x - a[0], wz = z - a[1];
-    const L = vx * vx + vz * vz;
-    let t = L ? (wx * vx + wz * vz) / L : 0;
-    t = clamp(t, 0, 1);
-    return Math.hypot(x - (a[0] + vx * t), z - (a[1] + vz * t));
-  }
-  function navigable(x, z) {
-    if (!inRing(x, z, C.water)) return false;
-    for (const r of C.islands) if (inRing(x, z, r)) return false;
-    for (const isl of C.extraIslands) if (Math.hypot(x - isl.p[0], z - isl.p[1]) < isl.r + 2) return false;
-    for (const b of C.bridges) if (Math.hypot(x - b.x, z - b.z) < b.r) return true;
-    for (const nm in C.causeways) {
-      const half = (nm === '杨公堤' ? 11 : 9.5) + 2.4;
-      for (const line of C.causeways[nm]) {
-        for (let i = 1; i < line.length; i++) if (segD(x, z, line[i - 1], line[i]) < half) return false;
-      }
-    }
-    return true;
+    throw (lastErr || new Error('WebGL 不可用'));
   }
 
-  /* ---------------- 检查点模型 ---------------- */
-  const gateMeshes = [];
-  function buildGates() {
-    const buoyMatRed = new THREE.MeshLambertMaterial({ color: 0xc0392b });
-    const buoyMatWhite = new THREE.MeshLambertMaterial({ color: 0xf2ede2 });
-    const cyl = new THREE.CylinderGeometry(0.75, 0.9, 2.0, 10);
-    const beamMat = new THREE.MeshBasicMaterial({ color: 0x7fd6c0, transparent: true, opacity: 0.10, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-    C.gates.forEach((g, i) => {
-      const grp = new THREE.Group();
-      const dirx = Math.cos(g.a), dirz = Math.sin(g.a);
-      const nx = -dirz, nz = dirx;
-      for (const side of [-1, 1]) {
-        const bx = g.x + nx * 24 * side, bz = g.z + nz * 24 * side;
-        const b1 = new THREE.Mesh(cyl, buoyMatRed); b1.position.set(bx, 1.0, bz); grp.add(b1);
-        const b2 = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.42, 10), buoyMatWhite);
-        b2.position.set(bx, 1.85, bz); grp.add(b2);
-        const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.5), buoyMatRed);
-        flag.position.set(bx, 2.5, bz); flag.rotation.y = -g.a; grp.add(flag);
-      }
-      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 1.1, 26, 6, 1, true), beamMat.clone());
-      beam.position.set(g.x, 11, g.z); grp.add(beam);
-      grp.userData.beam = beam;
-      scene.add(grp);
-      gateMeshes.push(grp);
-    });
-    // 起点浮标
-    const startGrp = new THREE.Group();
-    const fx = Math.cos(C.heading), fz = Math.sin(C.heading);
-    for (const side of [-1, 1]) {
-      const bx = C.start.x - fz * 26 * side, bz = C.start.z + fx * 26 * side;
-      const b = new THREE.Mesh(cyl, buoyMatRed); b.position.set(bx, 1.0, bz); startGrp.add(b);
-      const b2 = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.42, 10), buoyMatWhite);
-      b2.position.set(bx, 1.85, bz); startGrp.add(b2);
-    }
-    scene.add(startGrp);
+  function fatal(msg) {
+    const f = $('fatal');
+    if (!f) { alert(msg); return; }
+    $('fatalMsg').textContent = msg;
+    f.style.display = 'flex';
+    HUD.showLoading(false);
   }
 
-  /* ---------------- 初始化 ---------------- */
+  /* ---------------- 应用画质档位 ---------------- */
+  function applyTier(t) {
+    if (!renderer) return;
+    try {
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, t.dpr));
+      Weather.setRainCount(t.rain);
+      Water.setReflect(!!t.reflect);
+    } catch (e) { }
+  }
+
+  /* ---------------- 启动 ---------------- */
   async function boot() {
     const canvas = $('scene');
-    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 760;
-    window.__LOW = isMobile;
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.75));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    HUD.showLoading(true);
+    HUD.loading('正在点亮画布…', 2);
+
+    try {
+      renderer = makeRenderer(canvas);
+    } catch (e) {
+      fatal('无法创建 WebGL 上下文：' + e.message + '（请检查显卡驱动或改用 Chrome/Edge）');
+      return;
+    }
+    renderer.setSize(Math.max(2, window.innerWidth), Math.max(2, window.innerHeight));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.95;
+    renderer.toneMappingExposure = CFG.render.exposure;
     renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.shadowMap.enabled = false;
+
+    // 画布尺寸兜底：boot 时窗口可能尚未布局（尺寸 0），用 ResizeObserver 跟随
+    const ro = new ResizeObserver(entries => {
+      for (const en of entries) {
+        const w = Math.max(2, Math.round(en.contentRect.width));
+        const h = Math.max(2, Math.round(en.contentRect.height));
+        if (renderer.domElement.width !== Math.round(w * renderer.getPixelRatio())) {
+          renderer.setSize(w, h);
+          camera.aspect = w / h;
+          camera.updateProjectionMatrix();
+        }
+      }
+    });
+    ro.observe(canvas);
+
+    const tierIdx = Quality.detect(renderer);
+    tier = CFG.quality.tiers[tierIdx];
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, tier.dpr) || 1);
+    Quality.apply(tier);
+
+    canvas.addEventListener('webglcontextlost', e => {
+      e.preventDefault();
+      fatal('显卡上下文丢失，页面即将刷新…');
+      setTimeout(() => location.reload(), 1600);
+    }, false);
 
     scene = new THREE.Scene();
     window.__scene = scene;
-    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.4, 9000);
-
-    HUD.showLoading(true);
-    HUD.loading('正在读取湖岸线…', 4);
-
-    world = await World.build(scene, renderer, C, (msg, pct) => HUD.loading(msg, pct));
-    HUD.loading('正在安放亭台楼阁…', 88);
-    await new Promise(r => setTimeout(r, 30));
-    Landmarks.build(scene, C);
-
-    HUD.loading('正在推船下水…', 95);
-    await new Promise(r => setTimeout(r, 30));
-    boat = Boat.create(scene);
-    boat.reset(C.start.x, C.start.z, C.heading);
-    buildGates();
-
+    window.__renderer = renderer;
+    camera = new THREE.PerspectiveCamera(CFG.render.fovBase, window.innerWidth / window.innerHeight, CFG.render.near, CFG.render.far);
     window.__camera = camera;
-    HUD.init(C);
-    HUD.showHUD(false);
-    const sk = document.getElementById('st-km'); if (sk) sk.textContent = (C.total / 1000).toFixed(2);
-    HUD.setMute(true);
-    AudioFX.setMuted(true);
 
+    // 绑定 UI 必须在耗时构建之前（Windows 修复：点按钮无反应的根因）
+    bindUI();
+
+    // 加载看门狗
+    const wd = setTimeout(() => {
+      if (state === 'loading') fatal('加载超时：世界构建未完成。可尝试加参数 ?safe=1 以低配模式启动。');
+    }, 45000);
+
+    try {
+      world = await World.build(scene, renderer, C, (msg, pct) => { HUD.loading(msg, pct); window.__prog = { msg, pct, at: performance.now() }; }, { tier });
+    } catch (e) {
+      clearTimeout(wd);
+      fatal('世界构建失败：' + (e && e.message ? e.message : e));
+      if (window.__log) window.__log('world build: ' + (e && e.stack || e));
+      return;
+    }
+
+    HUD.loading('正在推船下水…', 96);
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      boat = Boat.create(scene, tier);
+      boat.reset(C.start.x, C.start.z, C.heading);
+    } catch (e) {
+      clearTimeout(wd);
+      fatal('船只初始化失败：' + (e && e.message ? e.message : e));
+      return;
+    }
+
+    HUD.init(C, Landmarks.list);
+    HUD.showHUD(false);
+    HUD.setMute(true);
+    try { AudioFX.setMuted(true); } catch (e) { }
+    const stv = $('st-visit'); if (stv) stv.textContent = Landmarks.list.length;
+    const stk = $('st-km'); if (stk) stk.textContent = (C.total / 1000).toFixed(1);
+    const sbv = $('st-best'); if (sbv) sbv.textContent = bestVisited || '—';
+
+    clearTimeout(wd);
     HUD.loading('准备就绪', 100);
-    await new Promise(r => setTimeout(r, 260));
+    await new Promise(r => setTimeout(r, 240));
     HUD.showLoading(false);
     state = 'menu';
-    camera.position.set(C.start.x, 3.2, C.start.z);
-    camera.lookAt(C.start.x + Math.cos(C.heading) * 100, 3.0, C.start.z + Math.sin(C.heading) * 100);
-
-    bindUI();
     last = performance.now();
     requestAnimationFrame(frame);
   }
 
-  /* ---------------- UI ---------------- */
+  /* ---------------- UI 绑定 ---------------- */
   function bindUI() {
-    HUD.onStart(() => {
-      AudioFX.init(); AudioFX.resume(); AudioFX.setMuted(false);
-      HUD.setMute(false);
-      startRace();
-    });
-    HUD.onAgain(() => { startRace(); });
+    HUD.onStart(() => { startRun(); });
+    HUD.onAgain(() => { startRun(); });
     HUD.onBack(() => {
       state = 'menu';
       HUD.showResult(null);
       HUD.showStart(true);
       HUD.showHUD(false);
-      boat.reset(C.start.x, C.start.z, C.heading);
       HUD.hideLabels();
-      progIdx = 0; nextGate = 0;
+      boat.reset(C.start.x, C.start.z, C.heading);
     });
     HUD.onMute(() => {
-      const m = !AudioFX.muted;
-      AudioFX.setMuted(m); HUD.setMute(m);
+      try {
+        AudioFX.init(); AudioFX.resume();
+        const m = !AudioFX.muted;
+        AudioFX.setMuted(m); HUD.setMute(m);
+      } catch (e) { }
     });
 
     window.addEventListener('keydown', e => {
       keys[e.code] = true;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-      if (e.code === 'KeyR' && (state === 'race' || state === 'done')) startRace();
-      if (e.code === 'KeyM') { const m = !AudioFX.muted; AudioFX.setMuted(m); HUD.setMute(m); }
-      if (e.code === 'Enter' && state === 'menu') { AudioFX.init(); AudioFX.resume(); startRace(); }
+      if (e.code === 'KeyR' && (state === 'cruise' || state === 'done')) startRun();
+      if (e.code === 'KeyF' && state === 'cruise') finish(true);
+      if (e.code === 'KeyM') {
+        try {
+          AudioFX.init(); AudioFX.resume();
+          const m = !AudioFX.muted;
+          AudioFX.setMuted(m); HUD.setMute(m);
+        } catch (err) { }
+      }
+      if (e.code === 'Enter' && state === 'menu') startRun();
     });
     window.addEventListener('keyup', e => { keys[e.code] = false; });
-    const rb = document.getElementById('rotbtn');
-    if (rb) rb.addEventListener('click', () => document.body.classList.add('rot-ok'));
     window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+    const rb = $('rotbtn');
+    if (rb) rb.addEventListener('click', () => document.body.classList.add('rot-ok'));
+
+    /* 视角：桌面鼠标移动即环视（无需按键）+ 右键拖动粗调；触屏单指拖动转视角 */
+    const cvs = $('scene');
+    let dragging = false, lastPX = 0, lastPY = 0, touchViewId = null, tX = 0, tY = 0;
+    if (cvs) {
+      cvs.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'touch') {
+          if (touchViewId === null) { touchViewId = e.pointerId; tX = e.clientX; tY = e.clientY; }
+        } else if (e.button === 2) { dragging = true; lastPX = e.clientX; lastPY = e.clientY; }
+      });
+    }
+    window.addEventListener('pointermove', e => {
+      if (!boat) return;
+      if (e.pointerType === 'touch') {
+        // 手机：向左滑动屏幕，视角向左转
+        if (touchViewId === e.pointerId) {
+          boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw - (e.clientX - tX) * 0.0052, -2.6, 2.6);
+          boat.state.lookPitch = UTIL.clamp(boat.state.lookPitch - (e.clientY - tY) * 0.0036, -0.62, 0.62);
+          tX = e.clientX; tY = e.clientY;
+          lookT = performance.now();
+        }
+        return;
+      }
+      // 桌面：鼠标移动即转视角（与右键拖动同向）
+      const dx = e.movementX !== undefined ? e.movementX : (lastPX ? e.clientX - lastPX : 0);
+      const dy = e.movementY !== undefined ? e.movementY : (lastPY ? e.clientY - lastPY : 0);
+      boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw + dx * 0.0026, -2.6, 2.6);
+      boat.state.lookPitch = UTIL.clamp(boat.state.lookPitch - dy * 0.0022, -0.62, 0.62);
+      lastPX = e.clientX; lastPY = e.clientY;
+      lookT = performance.now();
+    });
+    window.addEventListener('pointerup', e => {
+      if (e.pointerType === 'touch' && touchViewId === e.pointerId) touchViewId = null;
+      dragging = false;
+    });
+    window.addEventListener('contextmenu', e => e.preventDefault());
 
     // 触屏
     if (('ontouchstart' in window) || navigator.maxTouchPoints > 0) document.body.classList.add('touch');
-    const stick = $('stick'), knob = stick.querySelector('.knob');
-    let stickId = null;
-    const setKnob = (dx, dy) => {
-      const r = 42;
-      const l = Math.min(r, Math.hypot(dx, dy));
-      const a = Math.atan2(dy, dx);
-      knob.style.transform = 'translate(' + Math.cos(a) * l + 'px,' + Math.sin(a) * l + 'px)';
-      touch.steer = clamp(dx / 40, -1, 1);
-    };
-    stick.addEventListener('pointerdown', e => { stickId = e.pointerId; stick.setPointerCapture(e.pointerId); setKnob(e.offsetX - 58, e.offsetY - 58); });
-    stick.addEventListener('pointermove', e => { if (stickId === e.pointerId) setKnob(e.offsetX - 58, e.offsetY - 58); });
-    const endStick = e => { if (stickId === e.pointerId) { stickId = null; touch.steer = 0; knob.style.transform = 'translate(0,0)'; } };
-    stick.addEventListener('pointerup', endStick);
-    stick.addEventListener('pointercancel', endStick);
-
+    const stick = $('stick');
+    if (stick) {
+      const knob = stick.querySelector('.knob');
+      let stickId = null;
+      const setKnob = (dx, dy) => {
+        const r = 42;
+        const l = Math.min(r, Math.hypot(dx, dy));
+        const a = Math.atan2(dy, dx);
+        if (knob) knob.style.transform = 'translate(' + Math.cos(a) * l + 'px,' + Math.sin(a) * l + 'px)';
+        touch.steer = clamp(dx / 40, -1, 1);
+      };
+      stick.addEventListener('pointerdown', e => { stickId = e.pointerId; try { stick.setPointerCapture(e.pointerId); } catch (err) { } setKnob(e.offsetX - 58, e.offsetY - 58); });
+      stick.addEventListener('pointermove', e => { if (stickId === e.pointerId) setKnob(e.offsetX - 58, e.offsetY - 58); });
+      const endStick = e => { if (stickId === e.pointerId) { stickId = null; touch.steer = 0; if (knob) knob.style.transform = 'translate(0,0)'; } };
+      stick.addEventListener('pointerup', endStick);
+      stick.addEventListener('pointercancel', endStick);
+    }
     const bindPedal = (el, on, off) => {
+      if (!el) return;
       el.addEventListener('pointerdown', e => { e.preventDefault(); el.classList.add('on'); on(); });
       el.addEventListener('pointerup', e => { el.classList.remove('on'); off(); });
       el.addEventListener('pointercancel', e => { el.classList.remove('on'); off(); });
@@ -196,20 +250,18 @@
     bindPedal($('pboost'), () => touch.boost = true, () => touch.boost = false);
   }
 
-  /* ---------------- 比赛流程 ---------------- */
-  function startRace() {
+  /* ---------------- 开始 ---------------- */
+  function startRun() {
+    try { AudioFX.init(); AudioFX.resume(); AudioFX.setMuted(false); HUD.setMute(false); } catch (e) { }
     HUD.showStart(false);
     HUD.showResult(null);
     HUD.showHUD(true);
-    HUD.setWrong(false);
     boat.reset(C.start.x, C.start.z, C.heading);
-    progIdx = 0; nextGate = 0; gatesPassed = 0; collisions = 0;
-    splits = []; splitIdx = 0; topSpeed = 0; elapsed = 0; raceTime = 0;
-    lastS = 0; wrongTimer = 0; finishAt = 0;
+    visitedCount = 0; topSpeed = 0; raceTime = 0; armed = false;
+    Landmarks.list.forEach(l => { l.visited = false; });
+    HUD.refreshMap();
     HUD.setTime(0);
-    HUD.setProgress(0, 0, C.total, C.sectors[0].name);
-    HUD.setGate(0, C.gates.length);
-    gateMeshes.forEach((g, i) => g.userData.beam.material.opacity = i === 0 ? 0.07 : 0.02);
+    HUD.setVisit(0, Landmarks.list.length);
 
     state = 'count';
     const myToken = ++raceToken;
@@ -225,52 +277,37 @@
         setTimeout(tick, 1000);
       } else {
         if (myToken !== raceToken) return;
-        HUD.countdown('GO');
+        HUD.countdown('启 航');
         AudioFX.start();
-        state = 'race';
+        state = 'cruise';
         t0 = performance.now();
+        HUD.toast('自由探索', '环湖探访十七景 · 回到起点码头自动结算（F 提前结束）');
       }
     };
     setTimeout(tick, 1000);
   }
 
-  function finish() {
+  /* ---------------- 结算 ---------------- */
+  function finish(manual) {
+    if (state !== 'cruise') return;
     state = 'done';
     HUD.hideLabels();
-    finishAt = performance.now();
-    const time = raceTime;
     AudioFX.finish();
+    if (manual) HUD.toast('行程结束', '本段探索已结算');
+    const visited = Landmarks.list.filter(l => l.visited).length;
     let newBest = false;
-    if (!best || time < best) {
-      best = time; newBest = true;
-      try { localStorage.setItem('westlake_best_v1', String(time)); } catch (e) { }
+    if (visited > bestVisited) {
+      bestVisited = visited; newBest = true;
+      try { localStorage.setItem('westlake_visited_v2', String(visited)); } catch (e) { }
     }
-    const rank = time < 165 ? 'S' : time < 185 ? 'A' : time < 210 ? 'B' : 'C';
-    if (splits.length < C.sectors.length) splits.push({ name: C.sectors[C.sectors.length - 1].name, time });
     HUD.showResult({
-      time, rank, newBest,
-      splits,
-      top: Math.round(topSpeed * 3.6),
-      gates: gatesPassed,
-      collisions
+      time: raceTime,
+      visited, total: Landmarks.list.length,
+      distance: boat.state.distance,
+      top: topSpeed,
+      collisions: boat.state.collisions,
+      newBest
     });
-  }
-
-  /* ---------------- 进度 ---------------- */
-  function progress(s) {
-    // 在当前索引附近找最近的中心线点
-    let best = progIdx, bd = Infinity;
-    const from = Math.max(0, progIdx - 40), to = Math.min(C.center.length, progIdx + 130);
-    for (let i = from; i < to; i++) {
-      const d = Math.hypot(boat.state.x - C.center[i][0], boat.state.z - C.center[i][1]);
-      if (d < bd) { bd = d; best = i; }
-    }
-    // 终点：回到起点且已接近一圈
-    const dStart = Math.hypot(boat.state.x - C.start.x, boat.state.z - C.start.z);
-    const nearEnd = best > C.center.length - 140;
-    if (nearEnd && dStart < 95 && C.cum[best] > C.total * 0.92) return { s: C.total, lateral: bd, done: true, idx: best };
-    if (best > progIdx) progIdx = best;
-    return { s: C.cum[progIdx], lateral: bd, done: false, idx: progIdx };
   }
 
   /* ---------------- 主循环 ---------------- */
@@ -278,126 +315,153 @@
     requestAnimationFrame(frame);
     const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
     last = now;
+    const fStart = performance.now();
 
     if (state === 'menu') {
-      const t = now * 0.00012;
-      const hx = C.start.x + Math.cos(C.heading) * 0.6, hz = C.start.z + Math.sin(C.heading) * 0.6;
-      camera.position.set(hx, 2.3 + Math.sin(now * 0.0006) * 0.10, hz);
-      camera.fov = 68; camera.updateProjectionMatrix();
-      const look = C.heading + Math.sin(t * 6) * 0.10;
-      camera.lookAt(hx + Math.cos(look) * 120, 2.4, hz + Math.sin(look) * 120);
-      boat.group.position.set(C.start.x, 0, C.start.z);
-      boat.group.rotation.set(0, -C.heading, 0);
+      const t = now * 0.0001;
+      const bx = C.start.x, bz = C.start.z;
+      const r = 17.5;
+      camera.position.set(bx + Math.cos(t) * r, 4.6 + Math.sin(now * 0.0005) * 0.5, bz + Math.sin(t) * r);
+      camera.fov = 50; camera.updateProjectionMatrix();
+      camera.lookAt(bx, 0.9, bz);
+      boat.group.position.set(bx, Math.sin(now * 0.0012) * 0.04, bz);
+      boat.group.rotation.set(0, -C.heading + Math.sin(t * 0.7) * 0.05, 0);
+    }
+
+    // 环视视角（count/cruise/done 通用）
+    if (boat && state !== 'menu' && state !== 'loading') {
+      const kQ = keys['KeyQ'], kE = keys['KeyE'];
+      if (kQ || kE) {
+        boat.state.lookYaw = UTIL.clamp(boat.state.lookYaw + (kE ? 1 : -1) * dt * 1.5, -2.6, 2.6);
+        lookT = performance.now();
+      } else if (performance.now() - lookT > 2600) {
+        const k = Math.exp(-dt * 1.7);
+        boat.state.lookYaw *= k;
+        boat.state.lookPitch *= k;
+        if (Math.abs(boat.state.lookYaw) < 0.001) boat.state.lookYaw = 0;
+        if (Math.abs(boat.state.lookPitch) < 0.001) boat.state.lookPitch = 0;
+      }
     }
 
     if (state === 'count') {
-      boat.update(dt, { throttle: 0, steer: 0, boost: false }, navigable);
-      boat.applyCamera(camera);
+      boat.update(dt, { throttle: 0, steer: 0, boost: false }, Terrain.navigable);
+      boat.applyCamera(camera, dt);
     }
 
-    if (state === 'race') {
+    if (state === 'cruise') {
       const kThrottle = (keys['KeyW'] || keys['ArrowUp'] || touch.throttle) ? 1 : 0;
       const kBrake = (keys['KeyS'] || keys['ArrowDown']) ? 1 : 0;
       const kSteer = (keys['KeyA'] || keys['ArrowLeft'] ? -1 : 0) + (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
-        input.throttle = kThrottle - kBrake * 0.45;
-        input.steer = clamp(kSteer + touch.steer, -1, 1);
-        input.boost = !!(keys['ShiftLeft'] || keys['ShiftRight'] || touch.boost);
+      input.throttle = kThrottle - kBrake * 0.5;
+      input.steer = clamp(kSteer + touch.steer, -1, 1);
+      input.boost = !!(keys['ShiftLeft'] || keys['ShiftRight'] || touch.boost);
       const before = boat.state.collisions;
-      boat.update(dt, input, navigable);
+      const wasBoost = boat.state.boosting;
+      boat.update(dt, input, Terrain.navigable);
       if (boat.state.collisions > before) { HUD.flash(); AudioFX.crash(); }
-      boat.applyCamera(camera);
+      if (!wasBoost && boat.state.boosting) AudioFX.whoosh();
+      boat.applyCamera(camera, dt);
 
-      // 下一个浮标的光柱按距离淡入淡出
-      if (nextGate < gateMeshes.length) {
-        const dgate = Math.hypot(boat.state.x - C.gates[nextGate].x, boat.state.z - C.gates[nextGate].z);
-        gateMeshes[nextGate].userData.beam.material.opacity = 0.16 * Math.max(0.12, Math.min(1, dgate / 260));
+      raceTime = (now - t0) / 1000;
+      if (boat.state.speed > topSpeed) topSpeed = boat.state.speed;
+      AudioFX.setSpeed(Math.abs(boat.state.speed) * 3.6, boat.state.boosting);
+
+      // 交通船 + 碰撞
+      const impact = Traffic.update(dt, boat.state, world.obstacles);
+      if (impact > 0) { HUD.flash(); AudioFX.crash(); }
+
+      // 探访景点
+      const b = boat.state;
+      for (const lm of Landmarks.list) {
+        if (lm.visited) continue;
+        const d = Math.hypot(b.x - lm.x, b.z - lm.z);
+        if (d < (lm.visitR || 260)) {
+          lm.visited = true;
+          visitedCount++;
+          HUD.toast('抵达 · ' + lm.name, lm.sub || '');
+          AudioFX.visit();
+          HUD.refreshMap();
+        }
+      }
+      HUD.setVisit(visitedCount, Landmarks.list.length);
+
+      // 自动结算：离开起点后，绕行足够远再回码头
+      const dStart = Math.hypot(b.x - C.start.x, b.z - C.start.z);
+      if (!armed && dStart > CFG.explore.leftStart) armed = true;
+      if (world.dock) {
+        const dDock = Math.hypot(b.x - world.dock.x, b.z - world.dock.z);
+        if (armed && raceTime > CFG.explore.minTime && b.distance > CFG.explore.minDistance && dDock < CFG.explore.dockRadius) {
+          HUD.toast('回到码头', '行程结算中…');
+          finish(false);
+        }
       }
 
-      const p = progress(0);
-      const ratio = clamp(p.s / C.total, 0, 1);
-      if (p.done) { raceTime = (now - t0) / 1000; finish(); }
-
-      // 计时与 HUD
-      if (state === 'race') {
-        raceTime = (now - t0) / 1000;
-        elapsed = raceTime;
-        HUD.setTime(raceTime);
-        HUD.setSpeed(boat.state.speed * 3.6, boat.state.boost);
-        HUD.setProgress(ratio, p.s / 1000, C.total, C.sectors[Math.min(C.sectors.length - 1, splitIdx)].name);
-        if (boat.state.speed > topSpeed) topSpeed = boat.state.speed;
-        AudioFX.setSpeed(boat.state.speed * 3.6, boat.state.boosting);
-
-        // 分段
-        const bound = C.total * C.sectors[splitIdx].upto;
-        if (p.s >= bound - 6 && splitIdx < C.sectors.length - 1) {
-          splits.push({ name: C.sectors[splitIdx].name, time: raceTime });
-          splitIdx++;
-        }
-
-        // 检查点
-        if (nextGate < C.gates.length) {
-          const g = C.gates[nextGate];
-          const d = Math.hypot(boat.state.x - g.x, boat.state.z - g.z);
-          if (d < 62 && p.s > g.s - 40) {
-            gatesPassed++;
-            boat.state.boost = Math.min(1, boat.state.boost + 0.17);
-            AudioFX.gate();
-            gateMeshes[nextGate].userData.beam.material.opacity = 0.04;
-            nextGate++;
-            if (nextGate < C.gates.length) gateMeshes[nextGate].userData.beam.material.opacity = 0.09;
-            HUD.setGate(gatesPassed, C.gates.length);
-          } else if (p.s > g.s + 90) {
-            nextGate++;
-            if (nextGate < C.gates.length) gateMeshes[nextGate].userData.beam.material.opacity = 0.24;
-            HUD.setGate(gatesPassed, C.gates.length);
-          }
-        }
-
-        // 逆行提示
-        const tx = Math.cos(C.heading), tz = Math.sin(C.heading);
-        if (p.s < lastS - 18) wrongTimer += dt; else wrongTimer = Math.max(0, wrongTimer - dt * 2);
-        lastS = p.s;
-        HUD.setWrong(wrongTimer > 0.7);
-      }
-      collisions = boat.state.collisions;
+      HUD.setTime(raceTime);
+      HUD.setSpeed(Math.abs(b.speed) * 3.6, b.tank, b.boosting);
+      HUD.setCompass(b.heading);
     }
 
     if (state === 'done') {
-      boat.update(dt, { throttle: 0, steer: input.steer * 0.4, boost: false }, navigable);
-      boat.applyCamera(camera);
-      HUD.setSpeed(boat.state.speed * 3.6, boat.state.boost);
+      boat.update(dt, { throttle: 0, steer: 0, boost: false }, Terrain.navigable);
+      boat.applyCamera(camera, dt);
+      HUD.setSpeed(Math.abs(boat.state.speed) * 3.6, boat.state.tank, false);
     }
 
-    world.update(dt, camera);
-    if (state === 'race' || state === 'count') HUD.updateLabels(camera, dt);
-    HUD.drawMinimap({ x: boat.state.x, z: boat.state.z, heading: boat.state.heading }, C.gates[Math.min(nextGate, C.gates.length - 1)]);
+    // 水面倒影与天气
+    const boats = [{ x: boat.state.x, z: boat.state.z, heading: boat.state.heading, w: 1.0 }].concat(Traffic.list());
+    Water.setBoats(boats);
+    world.update(dt, camera, boats, boat.state);
+    Landmarks.update(dt);
+
+    if (state === 'cruise' || state === 'count') {
+      HUD.updateLabels(camera, dt);
+      HUD.updateToast(dt);
+    }
+    if (boat) HUD.drawMinimap({ x: boat.state.x, z: boat.state.z, heading: boat.state.heading }, Traffic.list(), world.dock);
 
     renderer.render(scene, camera);
+
+    // 动态降档
+    const fms = performance.now() - fStart;
+    frameMs = fms;
+    emaMs = emaMs * 0.95 + fms * 0.05;
+    if (state === 'cruise') {
+      if (Quality.sample(frameMs)) applyTier(Quality.cfg());
+    }
   }
 
-  // 调试用：瞬移到赛道某处（不影响正常游玩）
+  /* ---------------- 调试 ---------------- */
   window.__teleport = function (s) {
     let i = 0; while (i < C.cum.length - 1 && C.cum[i] < s) i++;
     const j = Math.min(C.center.length - 1, i + 10);
     boat.state.x = C.center[i][0]; boat.state.z = C.center[i][1];
     boat.state.heading = Math.atan2(C.center[j][1] - C.center[i][1], C.center[j][0] - C.center[i][0]);
-    boat.state.speed = 40; boat.state.boost = 1; boat.state.wakeHist.length = 0;
-    progIdx = i; lastS = C.cum[i];
-    nextGate = 0; while (nextGate < C.gates.length && C.gates[nextGate].s < C.cum[i] - 30) nextGate++;
+    boat.state.speed = 30; boat.state.tank = 1;
+    boat.state.wakeHist.length = 0;
     boat.group.position.set(boat.state.x, 0, boat.state.z);
     boat.group.rotation.set(0, -boat.state.heading, 0);
   };
+  window.__tp = function (x, z, h) {
+    boat.state.x = x; boat.state.z = z;
+    if (h !== undefined) boat.state.heading = h;
+    boat.state.speed = 0; boat.state.wakeHist.length = 0;
+    boat.group.position.set(x, 0, z);
+    boat.group.rotation.set(0, -boat.state.heading, 0);
+  };
+  window.__state = () => ({ state, time: raceTime, boat: boat && boat.state, visited: visitedCount, tier: tier && tier.name });
+  window.__course = C;
 
   window.addEventListener('resize', () => {
     if (!renderer) return;
-    camera.aspect = window.innerWidth / window.innerHeight;
+    const w = Math.max(2, window.innerWidth), h = Math.max(2, window.innerHeight);
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(w, h);
   });
 
-  // 防止触屏滚动与双击缩放
   document.addEventListener('gesturestart', e => e.preventDefault());
-  document.addEventListener('touchmove', e => { if (e.target.closest('#stick') || e.target.closest('.pedal')) e.preventDefault(); }, { passive: false });
+  document.addEventListener('touchmove', e => { if (e.target.closest && (e.target.closest('#stick') || e.target.closest('.pedal'))) e.preventDefault(); }, { passive: false });
 
+  // 启动（boot 内部已有完整 try/catch 与 fatal 面板）
   boot();
 })();

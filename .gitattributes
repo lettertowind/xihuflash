@@ -1,0 +1,12 @@
+# 统一换行符：检出时保持 LF，消除 "LF will be replaced by CRLF" 警告
+* text=auto eol=lf
+
+# 二进制文件不做任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary

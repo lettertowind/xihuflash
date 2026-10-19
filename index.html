@@ -3,19 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>西湖 · 极速游船</title>
+<title>西湖极速</title>
 <script>
   window.__errors = [];
-  function __log(m) { window.__errors.push(m); console.error('[西湖竞速]', m); }
-  window.addEventListener('error', e => __log((e.message || '') + ' @' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '')));
+  function __log(m) { window.__errors.push(m); try { console.error('[西湖]', m); } catch (e) { } }
+  window.addEventListener('error', e => __log((e.message || '') + ' @' + ((e.filename || '').split('/').pop() || '') + ':' + (e.lineno || '')));
   window.addEventListener('unhandledrejection', e => __log('REJECT:' + ((e.reason && e.reason.message) || e.reason)));
+  // 加载看门狗（脚本级）：25 秒仍未开始渲染则提示
+  window.__bootT = setTimeout(function () {
+    if (!window.__scene) __log('BOOT_TIMEOUT: 25s 内未见场景创建');
+  }, 25000);
 </script>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #101a20; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #171f22; }
   body {
     font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
-    color: #f6f1e7; user-select: none; -webkit-user-select: none;
+    color: #eef2ec; user-select: none; -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
   }
   #app { position: fixed; inset: 0; }
@@ -23,54 +27,46 @@
 
   /* ---------------- HUD ---------------- */
   #hud { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .5s ease; }
-  #scrim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,14,18,.34) 0%, rgba(8,14,18,0) 16%, rgba(8,14,18,0) 62%, rgba(8,14,18,.34) 100%); }
   #hud.on { opacity: 1; }
+  #scrim { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(14,20,20,.30) 0%, rgba(14,20,20,0) 18%, rgba(14,20,20,0) 60%, rgba(14,20,20,.32) 100%); }
 
-  #timer {
-    position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
-    display: flex; align-items: baseline; gap: 8px;
-    padding: 8px 20px 9px; border-radius: 999px;
-    background: rgba(12, 20, 24, .38); backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 238, 208, .18);
-    box-shadow: 0 6px 24px rgba(0,0,0,.18);
-    font-variant-numeric: tabular-nums;
-  }
-  #timer .t { font-size: 26px; font-weight: 600; letter-spacing: .06em; font-family: "DIN Alternate", "Bahnschrift", monospace; }
-  #timer .u { font-size: 11px; opacity: .62; letter-spacing: .18em; }
-  #timer .lbl { font-size: 11px; opacity: .72; letter-spacing: .22em; margin-right: 4px; }
+  .chip { padding: 7px 16px 8px; border-radius: 999px; background: rgba(16, 24, 24, .40); backdrop-filter: blur(10px);
+    border: 1px solid rgba(214, 226, 218, .16); font-variant-numeric: tabular-nums; }
+  #timer { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: baseline; gap: 8px; }
+  #timer .t { font-size: 25px; font-weight: 600; letter-spacing: .05em; font-family: "DIN Alternate", "Bahnschrift", monospace; }
+  #timer .lbl { font-size: 10px; opacity: .65; letter-spacing: .24em; }
+  #compass { position: absolute; top: 18px; left: calc(50% + 130px); font-size: 13px; letter-spacing: .3em; padding: 9px 14px 10px; }
+  #visit { position: absolute; top: 18px; left: calc(50% - 250px); font-size: 11px; letter-spacing: .2em; padding: 11px 16px; }
 
-  #brand { position: absolute; top: 18px; left: 22px; display: flex; align-items: center; gap: 10px; }
-  #brand .dot { width: 7px; height: 7px; border-radius: 50%; background: #e8b46a; box-shadow: 0 0 12px #e8b46a; }
-  #brand .t { font-size: 13px; letter-spacing: .26em; opacity: .9; }
-  #brand .s { font-size: 10px; letter-spacing: .12em; opacity: .5; margin-top: 2px; }
-
-  #mini {
-    position: absolute; top: 18px; right: 18px; width: 168px; padding: 10px;
-    border-radius: 14px; background: rgba(12, 20, 24, .34);
-    border: 1px solid rgba(255, 238, 208, .14); backdrop-filter: blur(8px);
-  }
-  #minimap { display: block; width: 148px; height: 148px; }
-  #mini .cap { display: flex; justify-content: space-between; font-size: 9.5px; letter-spacing: .1em; opacity: .55; margin-top: 4px; }
+  #mini { position: absolute; top: 18px; right: 18px; width: 172px; padding: 10px; border-radius: 14px;
+    background: rgba(16, 24, 24, .38); border: 1px solid rgba(214,226,218,.14); backdrop-filter: blur(8px); }
+  #minimap { display: block; width: 150px; height: 150px; }
+  #mini .cap { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: .12em; opacity: .5; margin-top: 5px; }
 
   #speedbox { position: absolute; right: 26px; bottom: 26px; text-align: right; }
-  #speedval { font-family: "DIN Alternate", "Bahnschrift", monospace; font-size: 62px; font-weight: 700; line-height: .92; letter-spacing: -.02em; text-shadow: 0 4px 24px rgba(0,0,0,.35); }
-  #speedunit { font-size: 11px; letter-spacing: .3em; opacity: .6; margin-top: 2px; }
-  #boost { margin-top: 10px; width: 168px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; margin-left: auto; }
-  #boostfill { height: 100%; width: 0%; background: linear-gradient(90deg, #7fd6c0, #e8b46a); transition: width .08s linear; }
+  #speedval { font-family: "DIN Alternate", "Bahnschrift", monospace; font-size: 60px; font-weight: 700; line-height: .92; letter-spacing: -.02em; text-shadow: 0 4px 24px rgba(0,0,0,.35); }
+  #speedunit { font-size: 10.5px; letter-spacing: .3em; opacity: .6; margin-top: 2px; }
+  #boostwrap { margin-top: 10px; width: 168px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.16); overflow: hidden; margin-left: auto; transition: box-shadow .2s; }
+  #boostwrap.boosting { box-shadow: 0 0 16px rgba(255,190,80,.75); }
+  #boostfill { height: 100%; width: 0%; background: linear-gradient(90deg, #3f9fb4, #63ccc0); transition: width .08s linear; }
+  #boostlabel { font-size: 9px; letter-spacing: .3em; opacity: .5; margin-top: 5px; }
 
-  #prog { position: absolute; left: 26px; bottom: 26px; width: min(34vw, 380px); }
-  #progtrack { position: relative; height: 3px; border-radius: 2px; background: rgba(255,255,255,.18); }
-  #progfill { position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: #efe3cc; box-shadow: 0 0 12px rgba(239,227,204,.6); }
-  #progtrack .tick { position: absolute; top: -3px; width: 1px; height: 9px; background: rgba(255,255,255,.35); }
-  #progtext { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .14em; opacity: .55; margin-top: 8px; }
+  #hint { position: absolute; left: 26px; bottom: 26px; font-size: 10.5px; letter-spacing: .16em; opacity: .5; line-height: 2; }
 
   #wrong { position: absolute; left: 50%; top: 34%; transform: translate(-50%,-50%); font-size: 15px; letter-spacing: .2em;
     padding: 10px 22px; border-radius: 999px; background: rgba(150,32,26,.55); border: 1px solid rgba(255,180,160,.35);
     opacity: 0; transition: opacity .25s; }
   #wrong.on { opacity: 1; }
 
-  #countdown { position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%); font-size: 150px; font-weight: 700;
-    font-family: "DIN Alternate", monospace; text-shadow: 0 12px 60px rgba(0,0,0,.4); opacity: 0; letter-spacing: -.04em; }
+  #toast { position: absolute; left: 50%; top: 21%; transform: translate(-50%, -8px); text-align: center;
+    opacity: 0; transition: opacity .45s ease, transform .45s ease; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toastTitle { font-family: "Songti SC", "SimSun", serif; font-size: 30px; letter-spacing: .22em; color: #f4f0e4;
+    text-shadow: 0 4px 28px rgba(10,16,14,.65); }
+  #toastSub { font-size: 11.5px; letter-spacing: .18em; opacity: .8; margin-top: 7px; color: #d8e2d8; }
+
+  #countdown { position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%); font-size: 120px; font-weight: 700;
+    font-family: "Songti SC", serif; text-shadow: 0 12px 60px rgba(0,0,0,.4); opacity: 0; letter-spacing: .1em; }
   #countdown.pop { animation: cd 1s ease-out; }
   @keyframes cd { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.6); } 18% { opacity: 1; } 75% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.25); } }
 
@@ -83,28 +79,27 @@
   .lm.in { opacity: 1; }
   .lm .card {
     position: relative; padding: 8px 14px 9px; min-width: 118px;
-    background: linear-gradient(180deg, rgba(250,246,236,.94), rgba(243,236,222,.86));
-    border: 1px solid rgba(120,96,60,.28); border-radius: 3px;
-    box-shadow: 0 10px 30px rgba(20,16,10,.22);
-    color: #2b2419;
+    background: linear-gradient(180deg, rgba(248,248,242,.92), rgba(238,240,232,.85));
+    border: 1px solid rgba(110,120,108,.32); border-radius: 3px;
+    box-shadow: 0 10px 30px rgba(16,22,18,.26); color: #27302a;
   }
-  .lm .card::after { content: ""; position: absolute; inset: 3px; border: 1px solid rgba(150,120,70,.18); border-radius: 2px; pointer-events: none; }
+  .lm .card::after { content: ""; position: absolute; inset: 3px; border: 1px solid rgba(120,132,118,.20); border-radius: 2px; pointer-events: none; }
   .lm .n { font-size: 16px; font-weight: 600; letter-spacing: .06em; font-family: "Songti SC", "SimSun", serif; white-space: nowrap; }
-  .lm .d { font-size: 10.5px; color: #6b5a41; letter-spacing: .04em; margin-top: 3px; white-space: nowrap; }
-  .lm .k { position: absolute; top: -7px; right: 8px; font-size: 9px; letter-spacing: .12em; color: #8a6a3a; background: #f4eddf; padding: 1px 5px; border: 1px solid rgba(150,120,70,.25); border-radius: 2px; }
+  .lm .d { font-size: 10.5px; color: #5c685e; letter-spacing: .04em; margin-top: 3px; white-space: nowrap; }
+  .lm .k { position: absolute; top: -7px; right: 8px; font-size: 9px; letter-spacing: .12em; color: #5f7a68; background: #eef0e8; padding: 1px 5px; border: 1px solid rgba(110,120,108,.3); border-radius: 2px; }
 
   /* ---------------- 开始 / 结算 ---------------- */
   #start, #result {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(120% 90% at 50% 40%, rgba(12,20,24,.30), rgba(8,14,18,.82));
+    background: radial-gradient(120% 90% at 50% 40%, rgba(16,24,24,.28), rgba(10,16,16,.84));
     transition: opacity .5s ease;
   }
   #start.hide, #result.hide { opacity: 0; pointer-events: none; }
   .panel { width: min(720px, 90vw); text-align: center; }
-  .panel .kicker { font-size: 10.5px; letter-spacing: .55em; opacity: .55; text-transform: uppercase; }
-  .panel h1 { margin: 14px 0 6px; font-family: "Songti SC", "SimSun", serif; font-weight: 500; font-size: clamp(38px, 6vw, 68px); letter-spacing: .16em; }
-  .panel h1 em { font-style: normal; color: #e8b46a; }
-  .panel .sub { font-size: 13px; letter-spacing: .12em; opacity: .66; line-height: 1.9; }
+  .panel .kicker { font-size: 10.5px; letter-spacing: .55em; opacity: .5; text-transform: uppercase; }
+  .panel h1 { margin: 14px 0 6px; font-family: "Songti SC", "SimSun", serif; font-weight: 500; font-size: clamp(38px, 6vw, 66px); letter-spacing: .18em; }
+  .panel h1 em { font-style: normal; color: #a8d0c0; }
+  .panel .sub { font-size: 13px; letter-spacing: .12em; opacity: .68; line-height: 2; }
   .stats { display: flex; justify-content: center; gap: 34px; margin: 30px 0 26px; }
   .stat { min-width: 84px; }
   .stat b { display: block; font-family: "DIN Alternate", monospace; font-size: 25px; font-weight: 600; letter-spacing: .02em; }
@@ -113,46 +108,48 @@
   .keys i { font-style: normal; padding: 5px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 4px; letter-spacing: .08em; }
   .btn {
     pointer-events: auto; display: inline-flex; align-items: center; gap: 12px; cursor: pointer;
-    padding: 15px 42px; border: 1px solid rgba(232,180,106,.6); border-radius: 2px;
-    background: linear-gradient(180deg, rgba(232,180,106,.16), rgba(232,180,106,.05));
-    color: #f6f1e7; font-size: 14px; letter-spacing: .34em; font-family: inherit;
+    padding: 15px 42px; border: 1px solid rgba(168,208,192,.55); border-radius: 2px;
+    background: linear-gradient(180deg, rgba(168,208,192,.14), rgba(168,208,192,.04));
+    color: #eef2ec; font-size: 14px; letter-spacing: .34em; font-family: inherit;
     transition: background .25s, transform .25s;
   }
-  .btn:hover { background: rgba(232,180,106,.26); transform: translateY(-1px); }
+  .btn:hover { background: rgba(168,208,192,.24); transform: translateY(-1px); }
   .btn.ghost { border-color: rgba(255,255,255,.4); background: transparent; letter-spacing: .2em; padding: 13px 28px; }
 
-  #result { background: rgba(8,14,18,.55); }
-  #result .panel { width: min(560px, 92vw); background: #0c1216; border: 1px solid rgba(255,238,208,.18); border-radius: 18px; padding: 34px 44px 28px; box-shadow: 0 30px 90px rgba(0,0,0,.55); }
-  #result .time { font-family: "DIN Alternate", monospace; font-size: clamp(54px, 9vw, 86px); font-weight: 700; letter-spacing: -.02em; margin: 6px 0 0; }
-  #result .time small { font-size: 20px; opacity: .5; font-weight: 400; }
-  #result .rank { display: inline-block; margin-top: 8px; font-family: "Songti SC", serif; font-size: 15px; letter-spacing: .3em; color: #e8b46a; }
-  .splits { margin: 22px 0 8px; border-top: 1px solid rgba(255,255,255,.12); }
-  .split { display: flex; justify-content: space-between; padding: 8px 2px; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,.07); }
-  .split span:first-child { opacity: .86; letter-spacing: .08em; }
-  .split span:last-child { font-family: "DIN Alternate", monospace; opacity: 1; }
-  .resultstats { display: flex; justify-content: center; gap: 36px; margin: 18px 0 24px; }
+  #result { background: rgba(10,16,16,.55); }
+  #result .panel { width: min(560px, 92vw); background: #0d1517; border: 1px solid rgba(214,226,218,.18); border-radius: 18px; padding: 34px 44px 28px; box-shadow: 0 30px 90px rgba(0,0,0,.55); }
+  #result .time { font-family: "DIN Alternate", monospace; font-size: clamp(50px, 8vw, 78px); font-weight: 700; letter-spacing: -.02em; margin: 6px 0 0; }
+  .newbest { color: #ffd23c; font-size: 11px; letter-spacing: .24em; height: 15px; margin-top: 6px; }
+  .resultstats { display: flex; justify-content: center; gap: 34px; margin: 20px 0 26px; }
+  #result .stat b { font-size: 21px; }
   #result .stat span { opacity: .62; }
-  .newbest { color: #e8b46a; font-size: 11px; letter-spacing: .24em; height: 14px; }
 
-  #rotate { display: none; position: absolute; inset: 0; z-index: 70; background: #0c1418; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: #f6f1e7; }
-  #rotate .ic { font-size: 54px; color: #e8b46a; animation: rot 2.4s ease-in-out infinite; }
+  #rotate { display: none; position: absolute; inset: 0; z-index: 70; background: #0d1517; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: #eef2ec; }
+  #rotate .ic { font-size: 54px; color: #a8d0c0; animation: rot 2.4s ease-in-out infinite; }
   @keyframes rot { 0%,40% { transform: rotate(0); } 70%,100% { transform: rotate(90deg); } }
   #rotate .t { font-family: 'Songti SC', serif; font-size: 22px; letter-spacing: .3em; }
   #rotate .s { font-size: 9px; letter-spacing: .3em; opacity: .45; }
-  #rotate button { margin-top: 26px; background: transparent; border: 1px solid rgba(255,255,255,.3); color: #f6f1e7; padding: 9px 22px; font-size: 11px; letter-spacing: .2em; border-radius: 2px; font-family: inherit; }
-  @media (orientation: portrait) and (max-width: 900px) { #rotate { display: flex; } body.rot-ok #rotate { display: none; } }
+  #rotate button { margin-top: 26px; background: transparent; border: 1px solid rgba(255,255,255,.3); color: #eef2ec; padding: 9px 22px; font-size: 11px; letter-spacing: .2em; border-radius: 2px; font-family: inherit; pointer-events: auto; }
+  @media (pointer: coarse) and (orientation: portrait) { #rotate { display: flex; } body.rot-ok #rotate { display: none; } }
 
-  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #0e171d; z-index: 50; transition: opacity .6s; }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #131c1e; z-index: 50; transition: opacity .6s; }
   #loading.hide { opacity: 0; pointer-events: none; }
   #loading .box { text-align: center; }
-  #loading .t { font-family: "Songti SC", serif; font-size: 20px; letter-spacing: .4em; opacity: .8; }
+  #loading .t { font-family: "Songti SC", serif; font-size: 20px; letter-spacing: .44em; opacity: .8; }
   #loading .bar { width: 220px; height: 2px; background: rgba(255,255,255,.12); margin: 18px auto 0; overflow: hidden; }
-  #loading .bar i { display: block; height: 100%; width: 0%; background: #e8b46a; transition: width .3s; }
-  #loading .s { font-size: 10px; letter-spacing: .2em; opacity: .4; margin-top: 12px; height: 14px; }
+  #loading .bar i { display: block; height: 100%; width: 0%; background: #a8d0c0; transition: width .3s; }
+  #loading .s { font-size: 10px; letter-spacing: .2em; opacity: .42; margin-top: 12px; height: 14px; }
 
   #mute { position: absolute; left: 22px; bottom: 24px; pointer-events: auto; cursor: pointer; font-size: 10px; letter-spacing: .2em; opacity: .45;
-    border: 1px solid rgba(255,255,255,.18); padding: 5px 9px; border-radius: 3px; background: transparent; color: #f6f1e7; font-family: inherit; }
+    border: 1px solid rgba(255,255,255,.18); padding: 5px 9px; border-radius: 3px; background: transparent; color: #eef2ec; font-family: inherit; }
   #mute:hover { opacity: .8; }
+
+  #fatal { display: none; position: absolute; inset: 0; z-index: 90; background: rgba(10,15,15,.92);
+    align-items: center; justify-content: center; text-align: center; }
+  #fatal .box { max-width: 460px; padding: 30px; border: 1px solid rgba(214,226,218,.2); border-radius: 12px; background: #10191b; }
+  #fatal .t { font-family: "Songti SC", serif; font-size: 20px; letter-spacing: .3em; color: #e8b0a0; }
+  #fatalMsg { font-size: 12px; opacity: .75; line-height: 1.9; margin: 14px 0 18px; }
+  #fatal button { background: transparent; border: 1px solid rgba(255,255,255,.3); color: #eef2ec; padding: 9px 24px; border-radius: 2px; cursor: pointer; font-family: inherit; letter-spacing: .2em; }
 
   /* ---------------- 触屏 ---------------- */
   #touch { position: absolute; inset: 0; display: none; pointer-events: none; }
@@ -160,21 +157,20 @@
   #stick { position: absolute; left: 30px; bottom: 92px; width: 116px; height: 116px; border-radius: 50%;
     border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.05); pointer-events: auto; }
   #stick .knob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%;
-    background: rgba(246,241,231,.35); border: 1px solid rgba(255,255,255,.5); }
+    background: rgba(238,242,236,.35); border: 1px solid rgba(255,255,255,.5); }
   #pedals { position: absolute; right: 26px; bottom: 120px; display: flex; gap: 12px; pointer-events: auto; }
   .pedal { width: 76px; height: 76px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
     background: rgba(255,255,255,.07); display: flex; align-items: center; justify-content: center; font-size: 11px; letter-spacing: .14em; }
-  .pedal.on { background: rgba(232,180,106,.35); border-color: rgba(232,180,106,.7); }
-  .pedal.boost { border-color: rgba(127,214,192,.5); color: #c9f0e4; }
+  .pedal.on { background: rgba(168,208,192,.35); border-color: rgba(168,208,192,.7); }
+  .pedal.boost { border-color: rgba(255,196,110,.5); color: #ffe0b0; }
   #touchhint { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); font-size: 10px; letter-spacing: .18em; opacity: .35; }
 
   @media (max-width: 760px) {
-    #mini { width: 118px; padding: 8px; } #minimap { width: 102px; height: 102px; }
-    #speedval { font-size: 44px; } #prog { width: 42vw; } #timer .t { font-size: 20px; }
-    #brand { display: none; }
-    #timer { top: 12px; padding: 6px 14px 7px; }
-    #timer .t { font-size: 19px; }
-    #mini { top: 12px; right: 12px; }
+    #mini { width: 122px; padding: 8px; } #minimap { width: 104px; height: 104px; }
+    #speedval { font-size: 44px; } #timer .t { font-size: 20px; }
+    #compass { display: none; } #visit { left: 14px; top: 64px; }
+    #hint { display: none; }
+    #timer { top: 12px; } #mini { top: 12px; right: 12px; }
   }
 </style>
 </head>
@@ -184,22 +180,22 @@
 
   <div id="hud">
     <div id="scrim"></div>
-    <div id="timer"><span class="lbl">TIME</span><span class="t" id="tval">00:00.000</span></div>
-    <div id="brand"><span class="dot"></span><div><div class="t">西湖 · 极速游船</div><div class="s">WEST LAKE SPRINT</div></div></div>
+    <div id="visit" class="chip">探访 0 / 17</div>
+    <div id="timer" class="chip"><span class="lbl">TIME</span><span class="t" id="tval">00:00.00</span></div>
+    <div id="compass" class="chip">北</div>
     <div id="mini">
       <canvas id="minimap" width="296" height="296"></canvas>
-      <div class="cap"><span>COURSE</span><span id="minicap">0 / 20</span></div>
+      <div class="cap"><span>西湖全景</span><span>WEST LAKE</span></div>
     </div>
     <div id="speedbox">
       <div id="speedval">0</div>
       <div id="speedunit">KM / H</div>
-      <div id="boost"><div id="boostfill"></div></div>
+      <div id="boostwrap"><div id="boostfill"></div></div>
+      <div id="boostlabel">氮气 · SHIFT</div>
     </div>
-    <div id="prog">
-      <div id="progtrack"><div id="progfill"></div></div>
-      <div id="progtext"><span id="sectorname">湖滨起航</span><span id="progkm">0.00 / 8.85 km</span></div>
-    </div>
+    <div id="hint">W 油门 · S 减速 · A/D 转向<br>Shift 氮气 · 移动鼠标环视 · 右键拖动观景<br>F 结算 · R 重来</div>
     <div id="wrong">方向错了 · 调头</div>
+    <div id="toast"><div id="toastTitle"></div><div id="toastSub"></div></div>
     <div id="countdown"></div>
     <div id="flash"></div>
     <button id="mute">音效 开</button>
@@ -210,29 +206,32 @@
   <div id="start">
     <div class="panel">
       <div class="kicker">West Lake · Hangzhou</div>
-      <h1>西湖<em>极速</em>游船</h1>
-      <div class="sub">绕苏堤一圈 · 穿过东浦桥与锁澜桥 · 沿岸十七处胜景</div>
+      <h1>西湖<em>极速</em></h1>
+      <div class="sub">烟雨江南 · 摇橹乌篷 · 环湖探访十七处胜景<br>自由探索，回到起点码头自动结算</div>
       <div class="stats">
-        <div class="stat"><b id="st-km">8.73</b><span>KM 赛程</span></div>
-        <div class="stat"><b>20</b><span>浮标检查点</span></div>
-        <div class="stat"><b>240</b><span>KM/H 极速</span></div>
+        <div class="stat"><b id="st-km">8.7</b><span>KM 湖程</span></div>
+        <div class="stat"><b id="st-visit">17</b><span>处 名 胜</span></div>
+        <div class="stat"><b id="st-best">—</b><span>最佳探访</span></div>
       </div>
       <div class="keys">
-        <i>W / ↑ 油门</i><i>S / ↓ 收油</i><i>A D 转向</i><i>Shift 氮气</i><i>R 重开</i>
+        <i>W / ↑ 油门</i><i>S / ↓ 减速</i><i>A D 转向</i><i>Shift 氮气</i><i>鼠标移动 环视</i><i>右键拖动 观景</i><i>F 结算</i><i>R 重来</i><i>M 音效</i>
       </div>
-      <button class="btn" id="startbtn">开 始 航 行</button>
+      <button class="btn" id="startbtn">开 始 游 湖</button>
     </div>
   </div>
 
   <div id="result" class="hide">
     <div class="panel">
-      <div class="kicker">Finish</div>
-      <div class="time" id="rtime">00:00.000</div>
-      <div class="rank" id="rrank">A</div>
+      <div class="kicker">航 程 结 算</div>
+      <div class="time" id="rtime">00:00.00</div>
       <div class="newbest" id="rnew"></div>
-      <div class="splits" id="rsplits"></div>
-      <div class="resultstats" id="rstats"></div>
-      <button class="btn" id="againbtn">再 来 一 次</button>
+      <div class="resultstats">
+        <div class="stat"><b id="rvisit">0 / 17</b><span>探访名胜</span></div>
+        <div class="stat"><b id="rdist">0.00 km</b><span>航行里程</span></div>
+        <div class="stat"><b id="rtop">0 km/h</b><span>最高航速</span></div>
+        <div class="stat"><b id="rcoll">0</b><span>碰撞次数</span></div>
+      </div>
+      <button class="btn" id="againbtn">再 游 一 次</button>
       <div style="margin-top:14px"><button class="btn ghost" id="backbtn">返回起点</button></div>
     </div>
   </div>
@@ -249,21 +248,40 @@
   <div id="rotate"><div class="ic">⟳</div><div class="t">请 横 屏 游 玩</div><div class="s">ROTATE YOUR DEVICE</div><button id="rotbtn">仍 然 继 续</button></div>
 
   <div id="loading"><div class="box">
-    <div class="t">西 湖</div>
+    <div class="t">西 湖 极 速</div>
     <div class="bar"><i id="lbar"></i></div>
-    <div class="s" id="lmsg">正在读取湖岸线…</div>
+    <div class="s" id="lmsg">正在铺开烟雨…</div>
+  </div></div>
+
+  <div id="fatal"><div class="box">
+    <div class="t">无 法 启 动</div>
+    <div id="fatalMsg"></div>
+    <button onclick="location.reload()">重 新 加 载</button>
   </div></div>
 </div>
 
 <script src="js/vendor/three.min.js"></script>
-<script>THREE.ColorManagement.legacyMode = false;</script>
+<script>if (window.THREE && THREE.ColorManagement) THREE.ColorManagement.legacyMode = false;</script>
 <script src="js/course-data.js"></script>
+<script src="js/config.js"></script>
 <script src="js/util.js"></script>
-<script src="js/world.js"></script>
+<script src="js/textures.js"></script>
+<script src="js/photo-assets.js"></script>
+<script src="js/quality.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/water.js"></script>
+<script src="js/trees.js"></script>
+<script src="js/buildings.js"></script>
+<script src="js/figures.js"></script>
 <script src="js/landmarks.js"></script>
+<script src="js/boat-model.js"></script>
 <script src="js/boat.js"></script>
-<script src="js/hud.js"></script>
+<script src="js/traffic.js"></script>
+<script src="js/birds.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/world.js"></script>
 <script src="js/game.js"></script>
 </body>
 </html>
