@@ -204,6 +204,7 @@ window.Landmarks = (function () {
       spots.push({ x, z });
       if (spots.length > 22) { imSpots.push({ x, z, gy }); continue; }   // 超额村舍走合批
       const g = new THREE.Group();
+      const halls = [];                                    // 收集主屋：落位后换算成世界坐标做碰撞圆
       const nHouse = 1 + ((rr() * 2.4) | 0);
       for (let h2 = 0; h2 < nHouse; h2++) {
         const w = 7 + rr() * 6, d = 5.5 + rr() * 3.5, hh = 3.6 + rr() * 2.0;
@@ -211,6 +212,8 @@ window.Landmarks = (function () {
         const hall = B.hall({ w, d, h: hh, bodyMat });
         hall.position.set((rr() - 0.5) * 14, 0, (rr() - 0.5) * 12);
         hall.rotation.y = rr() * Math.PI * 2;
+        hall.userData.hr = 0.5 * Math.max(w, d) * 1.08 + 0.3;   // 半对角近似
+        halls.push(hall);
         g.add(hall);
       }
       const wl = 10 + rr() * 10;
@@ -226,6 +229,21 @@ window.Landmarks = (function () {
       g.position.set(x, gy - 0.15, z);
       g.rotation.y = Math.atan2(n[0], n[1]) + (rr() - 0.5) * 0.6;
       L.group.add(g);
+      /* 房屋 / 院墙 → 世界坐标碰撞圆（v2.2 岸上不许穿屋） */
+      const cR = Math.cos(g.rotation.y), sR = Math.sin(g.rotation.y);
+      const toW = (lx, lz) => [x + lx * cR + lz * sR, z - lx * sR + lz * cR];
+      for (let k = 0; k < halls.length; k++) {
+        const p = toW(halls[k].position.x, halls[k].position.z);
+        L.houses.push({ x: p[0], z: p[1], r: halls[k].userData.hr });
+      }
+      {
+        const wa = wall.rotation.y, wc = Math.cos(wa), ws = Math.sin(wa);
+        for (let k = -1; k <= 1; k++) {
+          const t = k * wl * 0.38;
+          const p = toW(wall.position.x + t * wc, wall.position.z - t * ws);
+          L.houses.push({ x: p[0], z: p[1], r: 1.1 });
+        }
+      }
     }
     buildInstHouses(imSpots);
     return spots.length;
@@ -287,6 +305,8 @@ window.Landmarks = (function () {
       p3.set(s.x, Math.max(0.5, s.gy) - 0.15, s.z);
       const sc = 0.9 + rr() * 0.5;
       s3.set(sc, sc, sc);
+      /* v2.2：合批村舍也要有碰撞（bodyA 4.6×3.6 / bodyB 5.8×4.4，取半对角 + 余量） */
+      L.houses.push({ x: s.x, z: s.z, r: (i % 2 === 1 ? 3.75 : 3.05) * sc });
       m4.compose(p3, q, s3);
       const isB = i % 2 === 1;
       if (isB) { imB.setMatrixAt(ib, m4); imRB.setMatrixAt(ib, m4); ib++; }
@@ -450,6 +470,11 @@ window.Landmarks = (function () {
       im.frustumCulled = false; L.group.add(im);
     });
     L.waterside = spots;
+    /* v2.2：临水人家的碰撞脚印（柜体 5.4×4.2，按 sc 缩放，取半对角） */
+    for (let i = 0; i < spots.length; i++) {
+      const s = spots[i];
+      L.houses.push({ x: s.x, z: s.z, r: 3.45 * s.sc });
+    }
 
     /* ---- 灯杆补空：民居稀疏处立杆挂灯，保证整条航线两侧灯链不断 ---- */
     const rr2 = UTIL.rng(246810);
@@ -470,10 +495,10 @@ window.Landmarks = (function () {
         if (ddx * ddx + ddz * ddz < 46 * 46) { near = true; break; }
       }
       if (near) continue;
-      for (const pp of poles) if (Math.hypot(x - pp.x, z - pp.z) < 40) { near = true; break; }
+      for (const pp of poles) if (Math.hypot(x - pp.x, z - pp.z) < 34) { near = true; break; }
       if (near) continue;
       poles.push({ x, z, gy: terrain.heightAt(x, z) });
-      if (poles.length >= 90) break;
+      if (poles.length >= 132) break;
     }
     if (poles.length) {
       const postGeo = new THREE.CylinderGeometry(0.06, 0.09, 3.1, 6); postGeo.translate(0, 1.55, 0);
@@ -560,17 +585,21 @@ window.Landmarks = (function () {
       return bi;
     }
     const arcs = [];
-    if (byName['岳王庙'] && byName['断桥残雪']) arcs.push([nearestIdx(byName['岳王庙']), nearestIdx(byName['断桥残雪'])]);
-    if (byName['涌金门'] && byName['长桥公园']) arcs.push([nearestIdx(byName['涌金门']), nearestIdx(byName['长桥公园'])]);
+    if (byName['岳王庙'] && byName['断桥残雪']) arcs.push([nearestIdx(byName['岳王庙']), nearestIdx(byName['断桥残雪']), 11]);
+    if (byName['涌金门'] && byName['长桥公园']) arcs.push([nearestIdx(byName['涌金门']), nearestIdx(byName['长桥公园']), 11]);
+    /* v2.2：西岸（曲院风荷—岳王庙）与南岸（花港观鱼—净慈寺）各补一段商铺街，间距略疏 */
+    if (byName['曲院风荷'] && byName['岳王庙']) arcs.push([nearestIdx(byName['曲院风荷']), nearestIdx(byName['岳王庙']), 17]);
+    if (byName['花港观鱼'] && byName['净慈寺']) arcs.push([nearestIdx(byName['花港观鱼']), nearestIdx(byName['净慈寺']), 17]);
     const rr = UTIL.rng(20260214);
     for (const arc of arcs) {
       const i0 = arc[0], n = ((arc[1] - arc[0]) + ring.length) % ring.length;
+      const gap = arc[2] || 11;
       let acc = 0;
-      for (let k = 0; k < n && spots.length < 50; k++) {
+      for (let k = 0; k < n && spots.length < 72; k++) {
         const p = ring[(i0 + k) % ring.length], p2 = ring[(i0 + k + 1) % ring.length];
         const dx = p2[0] - p[0], dz = p2[1] - p[1], dl = Math.hypot(dx, dz) || 1;
         acc += dl;
-        if (acc < 11) continue; acc = 0;
+        if (acc < gap) continue; acc = 0;
         const nx = -dz / dl, nz = dx / dl;
         const sgn = terrain.shoreDist(p[0] + nx * 6, p[1] + nz * 6) > terrain.shoreDist(p[0] - nx * 6, p[1] - nz * 6) ? 1 : -1;
         const off = 7 + rr() * 8;
@@ -591,8 +620,163 @@ window.Landmarks = (function () {
     return spots;
   };
 
+  /* ---------------- 景点摊贩 / 街市集市（v2：让景点与街市真正"有人气"） ----------------
+     摊子组成：木摊桌 + 条纹棚布 + 双立柱 + 两只货担 + 檐下小红灯笼 + 桌面货品。
+     全部合批成 6 个 InstancedMesh（不随摊位数增加 draw call）；
+     灯笼用 m.nightLantern，随 Weather.lampK 入夜自动点亮。 */
+  function buildStalls(course, terrain, tier) {
+    const m = Buildings.mats();
+    const rr = UTIL.rng(24681357);
+    L.stalls = [];
+    L.market = [];
+    const spots = [];
+    const addSpot = (x, z, yaw) => {
+      const gy = terrain.heightAt(x, z);
+      spots.push({ x, z, gy, yaw });
+      L.stalls.push({ x, z, gy, yaw, r: 1.7 });
+    };
+    /* 1) 景点周边：沿湖岸摆摊，正面朝水面（游客下船就能看到） */
+    L.list.forEach(lm => {
+      const n = lm.enlarged ? 6 : (3 + ((rr() * 2) | 0));
+      let placed = 0;
+      for (let t = 0; t < 44 && placed < n; t++) {
+        const a = rr() * 6.2832, rad = 9 + rr() * 20;
+        const x = lm.x + Math.cos(a) * rad, z = lm.z + Math.sin(a) * rad;
+        const sd = terrain.exactShoreDist(x, z);
+        if (sd < 3 || sd > 15 || terrain.onCauseway(x, z)) continue;
+        const gy = terrain.heightAt(x, z);
+        if (gy < 1.2 || gy > 16) continue;
+        let ok = true;
+        for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 7) { ok = false; break; }
+        if (!ok) continue;
+        const nv = shoreNormal(terrain, x, z);
+        addSpot(x, z, Math.atan2(nv[0], nv[1]) + (rr() - 0.5) * 0.5);
+        placed++;
+      }
+    });
+    /* 2) 沿街商铺门前：再支一排摊子，形成集市 */
+    (course.shopSpots || []).forEach(s => {
+      for (let k = 0; k < 2; k++) {
+        const off = 7 + rr() * 5;
+        const x = s.x + Math.cos(s.yaw) * off + (rr() - 0.5) * 4;
+        const z = s.z + Math.sin(s.yaw) * off + (rr() - 0.5) * 4;
+        const sd = terrain.exactShoreDist(x, z);
+        if (sd < 2 || sd > 14 || terrain.onCauseway(x, z)) continue;
+        const gy = terrain.heightAt(x, z);
+        if (gy < 1.1 || gy > 12) continue;
+        let ok = true;
+        for (const q of spots) if (Math.hypot(x - q.x, z - q.z) < 6) { ok = false; break; }
+        if (!ok) continue;
+        const nv = shoreNormal(terrain, x, z);
+        addSpot(x, z, Math.atan2(nv[0], nv[1]) + (rr() - 0.5) * 0.4);
+      }
+      /* 集市人群锚点（由 figures.js 生成走动的人） */
+      for (let k = 0; k < 3; k++) {
+        const a = rr() * 6.2832, r2 = 3 + rr() * 9;
+        const mx = s.x + Math.cos(a) * r2, mz = s.z + Math.sin(a) * r2;
+        if (terrain.exactShoreDist(mx, mz) > 1.4) L.market.push({ x: mx, z: mz });
+      }
+    });
+    /* 3) 民居周边（v2.2）：村口、院墙外摆几只小摊，普通建筑周围也要有人气。
+       只取村庄主屋（碰撞半径 ≥ 5 的那批），隔一个抽样，整体上限 26 个村口摊。 */
+    const vill = (L.houses || []).filter(h => h.r >= 5);
+    let vAdded = 0;
+    for (let i = 0; i < vill.length && vAdded < 26; i += 2) {
+      const h = vill[i];
+      let placed = 0;
+      for (let t = 0; t < 7 && placed < 2; t++) {
+        const a = rr() * 6.2832, rad = h.r + 2.5 + rr() * 7;
+        const x = h.x + Math.cos(a) * rad, z = h.z + Math.sin(a) * rad;
+        const sd = terrain.exactShoreDist(x, z);
+        if (sd < 3 || sd > 22 || !clearSpot(terrain, x, z, 3)) continue;
+        const gy = terrain.heightAt(x, z);
+        if (gy < 1.1 || gy > 18) continue;
+        let ok = true;
+        for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 8) { ok = false; break; }
+        if (!ok) continue;
+        const nv = shoreNormal(terrain, x, z);
+        addSpot(x, z, Math.atan2(nv[0], nv[1]) + (rr() - 0.5) * 1.4);
+        L.market.push({ x: x + (rr() - 0.5) * 5, z: z + (rr() - 0.5) * 5 });   // 摊边人群
+        placed++; vAdded++;
+      }
+    }
+
+    /* 4) 码头集市（v2.2）：起点码头周围摆几只摊子 —— 玩家开局第一眼就该看到人气。
+       这里放宽岸距限制（码头本身就是人工驳岸，exactShoreDist 偏小）。 */
+    if (L.dock) {
+      let placed = 0;
+      for (let t = 0; t < 90 && placed < 7; t++) {
+        const a = rr() * 6.2832, rad = 10 + rr() * 17;
+        const x = L.dock.x + Math.cos(a) * rad, z = L.dock.z + Math.sin(a) * rad;
+        const sd = terrain.exactShoreDist(x, z);
+        if (sd < 2.2 || sd > 26 || terrain.onCauseway(x, z)) continue;
+        const gy = terrain.heightAt(x, z);
+        if (gy < 0.9 || gy > 16) continue;
+        let ok = true;
+        for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < 7.5) { ok = false; break; }
+        if (!ok) continue;
+        const nv = shoreNormal(terrain, x, z);
+        addSpot(x, z, Math.atan2(nv[0], nv[1]) + (rr() - 0.5) * 0.5);
+        L.market.push({ x: x + (rr() - 0.5) * 6, z: z + (rr() - 0.5) * 6 });
+        placed++;
+      }
+    }
+
+    const n = spots.length;
+    if (!n) return;
+    const tableGeo = new THREE.BoxGeometry(1.55, 0.72, 0.86); tableGeo.translate(0, 0.36, 0);
+    const awnGeo = new THREE.BoxGeometry(2.72, 0.07, 2.02);
+    awnGeo.rotateX(-0.15); awnGeo.translate(0, 2.34, 0.12);
+    const poleGeo = new THREE.CylinderGeometry(0.05, 0.062, 2.3, 5); poleGeo.translate(0, 1.15, 0);
+    const basketGeo = new THREE.CylinderGeometry(0.25, 0.19, 0.26, 9); basketGeo.translate(0, 0.86, 0);
+    const goodsGeo = new THREE.SphereGeometry(0.13, 7, 5); goodsGeo.scale(1.25, 0.8, 1); goodsGeo.translate(0, 0.82, 0);
+    const lanGeo = new THREE.SphereGeometry(0.16, 9, 7); lanGeo.scale(1, 1.22, 1);
+
+    const tableIM = new THREE.InstancedMesh(tableGeo, m.woodDark, n);
+    const awnIM = new THREE.InstancedMesh(awnGeo, m.awning, n);
+    const poleIM = new THREE.InstancedMesh(poleGeo, m.dark, n * 2);
+    const basketIM = new THREE.InstancedMesh(basketGeo, m.wood, n * 2);
+    const goodsIM = new THREE.InstancedMesh(goodsGeo, m.plaster, n * 3);
+    const lanIM = new THREE.InstancedMesh(lanGeo, m.nightLantern, n * 2);
+
+    const m4 = new THREE.Matrix4(), loc = new THREE.Matrix4(), out = new THREE.Matrix4();
+    const q = new THREE.Quaternion(), e = new THREE.Euler(), p3 = new THREE.Vector3(), s3 = new THREE.Vector3();
+    const cGoods = new THREE.Color();
+    const GOODS = [0xc4552e, 0xd9a13c, 0x6f8a45, 0xb8845a, 0x9c5a74];
+    for (let i = 0; i < n; i++) {
+      const s = spots[i];
+      e.set(0, s.yaw, 0); q.setFromEuler(e);
+      p3.set(s.x, Math.max(0.6, s.gy) - 0.06, s.z);
+      s3.set(1, 1, 1);
+      m4.compose(p3, q, s3);
+      tableIM.setMatrixAt(i, m4);
+      awnIM.setMatrixAt(i, m4);
+      for (let k = 0; k < 2; k++) {
+        loc.makeTranslation(k ? 1.18 : -1.18, 0, 0.55);
+        out.multiplyMatrices(m4, loc); poleIM.setMatrixAt(i * 2 + k, out);
+        loc.makeTranslation(k ? 0.55 : -0.5, 0, -0.24);
+        out.multiplyMatrices(m4, loc); basketIM.setMatrixAt(i * 2 + k, out);
+        /* 檐角双灯（夜里在摊子两侧亮起） */
+        loc.makeTranslation(k ? 1.3 : -1.3, 2.16, 0.62);
+        out.multiplyMatrices(m4, loc); lanIM.setMatrixAt(i * 2 + k, out);
+      }
+      for (let k = 0; k < 3; k++) {
+        loc.makeTranslation((rr() - 0.5) * 1.05, 0, (rr() - 0.5) * 0.45);
+        out.multiplyMatrices(m4, loc); goodsIM.setMatrixAt(i * 3 + k, out);
+        cGoods.setHex(GOODS[(rr() * GOODS.length) | 0]);
+        goodsIM.setColorAt(i * 3 + k, cGoods);
+      }
+    }
+    if (goodsIM.instanceColor) goodsIM.instanceColor.needsUpdate = true;
+    [tableIM, awnIM, poleIM, basketIM, goodsIM, lanIM].forEach(im => {
+      im.frustumCulled = false;
+      L.group.add(im);
+    });
+  }
+
   function buildShops(course, terrain, tier) {
     const spots = course.shopSpots || [];
+    L.shops = spots;
     if (!spots.length) return;
     const rr = UTIL.rng(13579);
     const m = Buildings.mats();
@@ -814,6 +998,9 @@ window.Landmarks = (function () {
     course.landmarks.forEach(l => byName[l.name] = l);
     const root = new THREE.Group();
     L.group = root; L.list = []; L.obstacles = [];
+    /* v2.2 岸上碰撞：所有民居 / 临水人家 / 合批村舍的脚印圆（world 坐标 + 半径），
+       供 Walk.refresh() 建空间网格，避免上坡后直接穿墙进屋 */
+    L.houses = [];
 
     /* 湖心质心：判断"哪个方向是岸"的基准 */
     let _cx = 0, _cz = 0;
@@ -1128,6 +1315,12 @@ window.Landmarks = (function () {
       const half = opt.half !== undefined ? opt.half : (CW_HALF[item.nc.name] || 9.5);
       const width = half * 2;                            // 桥宽 = 堤宽，隧道进深与堤身一致
       const rise = opt.rise !== undefined ? opt.rise : Math.min(4.4, span * 0.20);
+      /* v2.2：单座拱桥可整体绕 Y 轴旋转 90°（桥轴跟着转）。
+         桥轴线 px/pz 与几何体同转，__BRIDGES 里的 ux/uz（拱洞通行方向）也随之交换，
+         这样"看起来怎么转，船就怎么过"，不会出现视觉与碰撞错位。 */
+      if (opt.rot90) {
+        const tx = px; px = -pz; pz = tx;
+      }
       const g = B.archBridge({ span, width, rise, plaque: name });
       // archBridge 桥面两端局部 y = thick(1.02) → 基座 0.80 使桥面两端与堤顶 1.78 齐平（略高 4cm 防共面闪烁）
       g.position.set(cx, 0.80, cz);
@@ -1135,8 +1328,10 @@ window.Landmarks = (function () {
       g.rotation.y = Math.atan2(-pz, px);
       root.add(g);
       L.obstacles.push({ x: cx, z: cz, r: span * 0.30, bridge: true });
-      /* 供 Terrain.navigable 使用：只有拱洞正中可通过，两侧桥台/堤体不可穿 */
-      window.__BRIDGES.push({ x: cx, z: cz, ux: px, uz: pz, span, width, rise });
+      /* 供 Terrain.navigable 使用：只有拱洞正中可通过，两侧桥台/堤体不可穿
+         ax=true 表示整座桥绕 Y 旋转过 90°（锦带桥），拱洞轴线改为沿堤方向，
+         通行判定的两个轴要跟着交换，否则"看得见墙却能穿过去"。 */
+      window.__BRIDGES.push({ x: cx, z: cz, ux: px, uz: pz, span, width, rise, ax: !!opt.rot90 });
     }
 
     groups['苏堤'].forEach((item, i) => {
@@ -1148,7 +1343,9 @@ window.Landmarks = (function () {
       buildBridge(item, YANG_NAMES[idx], { half: CW_HALF['杨公堤'] });
     });
     groups['白堤'].forEach((item, i) => {
-      buildBridge(item, i === 0 ? '断桥' : '锦带桥', { half: CW_HALF['白堤'], rise: 2.2 });
+      /* v2.2：锦带桥（白堤内侧那座）整体旋转 90°——桥身横跨堤身、拱洞顺着堤走，
+         与断桥形成一横一纵的对照。该桥距环湖航线 380m，不影响竞速航道。 */
+      buildBridge(item, i === 0 ? '断桥' : '锦带桥', { half: CW_HALF['白堤'], rise: 2.2, rot90: i !== 0 });
     });
 
     /* ---------------- 起点码头（螺旋搜索陆点） ---------------- */
@@ -1180,6 +1377,7 @@ window.Landmarks = (function () {
     buildExtras(course, terrain);
     buildVillages(course, terrain, tier);
     buildShops(course, terrain, tier);
+    buildStalls(course, terrain, tier);         // 景点摊贩 + 街市集市（v2）
     buildWaterside(course, terrain, tier);      // 水路两侧人家 + 檐下灯笼（夜航指路）
     buildFlags(course, terrain);
 

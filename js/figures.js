@@ -324,6 +324,74 @@ window.Figures = (function () {
     }
   };
 
+  /* 场景 2.5：摊位摊主 + 集市人群（v2）
+     摊主站摊后不动（p.next 置大，不参与自动切换动作），顾客站摊前；
+     集市锚点由 Landmarks.buildStalls 生成，人在这里围着摊子走小圈。 */
+  F.registerVenues = function (stalls, market, tr, shops) {
+    const big = tr && tr.trees >= 750;
+    const maxV = big ? 150 : 64;
+    const maxM = big ? 180 : 90;
+    const VR = U.rng(31415926);
+    let nv = 0;
+    for (const s of stalls || []) {
+      if (nv >= maxV) break;
+      const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);          // 摊位正面朝向
+      const bx = s.x - fx * 1.35, bz = s.z - fz * 1.35;          // 摊主站在桌后
+      const gy = terrain.heightAt(bx, bz);
+      if (gy < 1.0) continue;
+      const def = pickOutfit(VR() < 0.42);
+      const p = addPerson(def, {
+        ring: { cx: bx, cz: bz, r2: 0.5, a: 0, w: 0 },
+        y: gy, scene: 'stall', safe: { x: bx, z: bz }
+      }, { mode: 'LEAN' });
+      p.next = 1e9;
+      nv++;
+      if (VR() < 0.6) {
+        const cx = s.x + fx * 2.0 + (VR() - 0.5) * 1.2;
+        const cz = s.z + fz * 2.0 + (VR() - 0.5) * 1.2;
+        const cy = terrain.heightAt(cx, cz);
+        if (cy > 1.0) {
+          const q = addPerson(pickOutfit(VR() < 0.5), {
+            ring: { cx, cz, r2: 0.45, a: 0, w: 0 },
+            y: cy, scene: 'stall', safe: { x: cx, z: cz }
+          }, { mode: 'IDLE' });
+          q.next = 1e9;
+        }
+      }
+    }
+    /* 集市：每个锚点站一两位，围着摊子慢慢转 */
+    let nm = 0;
+    for (const m of market || []) {
+      if (nm >= maxM) break;
+      const r2 = 1.2 + VR() * 2.6;
+      const gy = terrain.heightAt(m.x, m.z);
+      if (gy < 1.0) continue;
+      const k = 1 + (VR() < 0.45 ? 1 : 0);
+      for (let i = 0; i < k && nm < maxM; i++) {
+        addPerson(pickOutfit(VR() < 0.46), {
+          ring: { cx: m.x, cz: m.z, r2: r2, a: VR() * 6.283, w: (0.12 + VR() * 0.2) * (VR() < 0.5 ? 1 : -1) },
+          y: gy, scene: 'market', safe: { x: m.x, z: m.z }
+        }, { mode: VR() < 0.6 ? 'WALK' : 'IDLE' });
+        nm++;
+      }
+    }
+    /* 店铺门前：掌柜站摊后，挑着担子迎客（v2.2 普通街市也要有人） */
+    let nsh = 0;
+    for (const s of shops || []) {
+      if (nsh >= 72) break;
+      const fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);
+      const bx = s.x + fx * 2.3, bz = s.z + fz * 2.3;      // 摊桌在 3.2，掌柜站桌后
+      const gy = terrain.heightAt(bx, bz);
+      if (gy < 1.1) continue;
+      const p2 = addPerson(pickOutfit(VR() < 0.3), {
+        ring: { cx: bx, cz: bz, r2: 0.4, a: 0, w: 0 },
+        y: gy, scene: 'shop', safe: { x: bx, z: bz }
+      }, { mode: 'LEAN' });
+      p2.next = 1e9;
+      nsh++;
+    }
+  };
+
   /* 场景3：船乘客（Traffic.build 后调用，finalize 前均可注册） */
   F.addBoatPassengers = function (boatRecs, terr, tr) {
     terrain = terr; tier = tr;
@@ -588,6 +656,9 @@ window.Figures = (function () {
     mkBucket('props', propGeo(), new THREE.MeshLambertMaterial({ color: 0x6a4a2c }));
     F.registerVisitors(lmList, terr, tr);
     F.registerWalkers(course, terr, tr);
+    /* v2：摊位摊主 + 集市人群 + 店铺掌柜 */
+    const LM = window.Landmarks;
+    if (LM) F.registerVenues(LM.stalls || [], LM.market || [], tr, LM.shops || []);
     // finalize 延迟到首次 update（让 Traffic 乘客也能注册）
   };
 
@@ -717,9 +788,124 @@ window.Figures = (function () {
     return api;
   }
 
+  /* ---------------- 玩家自身：上岸步行姿态（第一视角可见腿与手臂） ----------------
+     局部坐标：脚底 y = 0，人物前方 = -Z，身高约 1.78m。
+     相机眼高 1.68 落在头内，所以不建头部；低头能看到自己的双腿交替迈步，
+     平视时画面下缘能看到两只手臂轮流向前摆（v2.2 需求 6）。 */
+  function walkerAvatar(opt) {
+    opt = opt || {};
+    const robeC = opt.robe === undefined ? 0x2f4a62 : opt.robe;
+    const mRobe = new THREE.MeshLambertMaterial({ color: robeC });
+    const mTrouser = new THREE.MeshLambertMaterial({ color: 0x46525f });
+    const mSkin = new THREE.MeshLambertMaterial({ color: 0xe3bd97 });
+    const mBelt = new THREE.MeshLambertMaterial({ color: 0x2a2622 });
+    const mShoe = new THREE.MeshLambertMaterial({ color: 0x2b2620 });
+    const g = new THREE.Group();
+
+    /* ---- 双腿：髋关节 → 大腿 → 膝关节 → 小腿 → 鞋 ---- */
+    const legs = [];
+    for (const side of [-1, 1]) {
+      const hip = new THREE.Group();
+      hip.position.set(side * 0.095, 0.94, 0);
+      const hipBall = new THREE.Mesh(new THREE.SphereGeometry(0.092, 8, 6), mTrouser);
+      hip.add(hipBall);                                    // 圆头顶：俯视不是一块平盖
+      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.072, 0.44, 8), mTrouser);
+      thigh.position.y = -0.22; hip.add(thigh);
+      const kneeBall = new THREE.Mesh(new THREE.SphereGeometry(0.072, 8, 6), mTrouser);
+      kneeBall.position.y = -0.44; hip.add(kneeBall);      // 遮住大腿/小腿接缝
+      const knee = new THREE.Group();
+      knee.position.y = -0.44; hip.add(knee);
+      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.052, 0.38, 8), mTrouser);
+      shin.position.y = -0.19; knee.add(shin);
+      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.075, 0.255), mShoe);
+      shoe.position.set(0, -0.395, -0.055); knee.add(shoe);
+      g.add(hip);
+      legs.push({ hip, knee, side });
+    }
+
+    /* ---- 短褐（上衣）：下摆到腰胯，腿完全露出来 ----
+       第一视角里相机就在肩膀上方 0.2m，上衣/肩膀贴脸会直接糊满屏幕，
+       所以整块上身放进 upper 组，第一视角隐藏（只留双腿 + 两条手臂）。 */
+    const upper = new THREE.Group();
+    const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.245, 0.30, 12), mRobe);
+    skirt.position.y = 1.14; upper.add(skirt);
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.215, 0.36, 10), mRobe);
+    torso.position.y = 1.42; upper.add(torso);
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.222, 0.222, 0.075, 12), mBelt);
+    belt.position.y = 1.30; upper.add(belt);
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.185, 10, 7), mRobe);
+    shoulder.scale.set(1.28, 0.6, 0.92);
+    shoulder.position.y = 1.60; upper.add(shoulder);
+    /* 交领右衽的月白领口 */
+    const collar = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.30, 0.04),
+      new THREE.MeshLambertMaterial({ color: 0xe6e1d0 }));
+    collar.position.set(0, 1.55, -0.175); collar.rotation.x = -0.08; upper.add(collar);
+    g.add(upper);
+
+    /* 腰胯不再单独建模：相机就在腰上方，俯视一块圆柱顶面反而更假；
+       腿的顶端用圆头（hipBall）收住，看到的自然就是"自己的两条腿"。 */
+
+    /* ---- 双臂：肩关节 → 衣袖 → 手（略往外撇，第一视角落在画面左右下角） ---- */
+    const arms = [];
+    for (const side of [-1, 1]) {
+      const sh = new THREE.Group();
+      sh.position.set(side * 0.20, 1.235, -0.02);
+      const shBall = new THREE.Mesh(new THREE.SphereGeometry(0.062, 8, 6), mRobe);
+      sh.add(shBall);                                    // 肩头圆球：袖管顶端不露平盖
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.039, 0.031, 0.36, 8), mRobe);
+      sleeve.position.y = -0.18; sh.add(sleeve);
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.038, 0.045, 8),
+        new THREE.MeshLambertMaterial({ color: 0xe6e1d0 }));
+      cuff.position.y = -0.372; sh.add(cuff);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.043, 8, 6), mSkin);
+      hand.scale.set(0.92, 0.82, 1.18);
+      hand.position.y = -0.402; sh.add(hand);
+      g.add(sh);
+      arms.push({ sh, side });
+    }
+
+    const api = {
+      group: g, legs, arms,
+      /* 步态驱动：step 为步相位，spN 为速度归一（0..1.6），air 腾空，vy 竖直速度 */
+      pose: function (step, spN, air, vy) {
+        const s = Math.sin(step);
+        const amp = 0.62 * Math.min(1.15, Math.max(0, spN));
+        if (air) {
+          /* 腾空：前腿抬、后腿收，手臂微微上举 */
+          const k = UTIL.clamp(vy * 0.1, -0.5, 0.5);
+          legs[0].hip.rotation.x = 0.55 + k; legs[1].hip.rotation.x = -0.28 - k;
+          legs[0].knee.rotation.x = -0.85; legs[1].knee.rotation.x = -0.45;
+          arms[0].sh.rotation.x = 0.45; arms[1].sh.rotation.x = 0.45;
+          arms[0].sh.rotation.z = 0.30; arms[1].sh.rotation.z = -0.30;
+          return;
+        }
+        legs[0].hip.rotation.x = s * amp;
+        legs[1].hip.rotation.x = -s * amp;
+        /* 膝盖只向后弯：后摆腿弯得多、前摆腿几乎伸直 */
+        legs[0].knee.rotation.x = -Math.max(0, s) * amp * 1.35;
+        legs[1].knee.rotation.x = -Math.max(0, -s) * amp * 1.35;
+        /* 手臂与腿反向：左腿前摆时右臂前摆 */
+        /* 第一视角：手臂"端在身前"再前后摆（base 0.78）。
+           如果让手臂自然下垂，相机会正好顺着袖管看进去，画面里只剩两根巨柱；
+           抬到身前以后看到的是袖子和手，摆动也一眼可辨。 */
+        arms[0].sh.rotation.x = 0.30 - s * amp * 0.50;
+        arms[1].sh.rotation.x = 0.30 + s * amp * 0.50;
+        arms[0].sh.rotation.z = 0.30;
+        arms[1].sh.rotation.z = -0.30;
+      },
+      setFirstPerson: function (on) {
+        /* 第一视角：藏掉整个上身（相机就贴着肩膀，留着会糊屏），只露腿和手臂 */
+        upper.visible = !on;
+      }
+    };
+    api.pose(0, 0, false, 0);
+    return api;
+  }
+
   window.PlayerModel = {
     build: F.makeFigure,
     avatar: playerAvatar,
+    walker: walkerAvatar,
     /* 坐姿人物（旧接口保留） */
     seated: function (opt) {
       const a = playerAvatar(opt);

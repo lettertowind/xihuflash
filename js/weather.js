@@ -6,27 +6,41 @@ window.Weather = (function () {
   const mists = [];
 
   W.sunDir = null;
+  W.sunVisual = new THREE.Vector3(0, 1, 0);   // 太阳本体方向（可低于地平线，只用于天空着色）
   W.dayT = 0;              // 0=日出 0.25=正午 0.5=日落 0.75=午夜
   W.daylight = 1;          // 0..1 环境亮度
+  W.sunHeight = 1;         // 太阳高度 sin(角)，-1..1
+  W.goldenK = 0;           // 黄金时刻（日出/日落）权重
   W.fogColor = null;       // 当前雾色（水面/其他模块实时取用）
   W.fogDensity = 0;
 
   let hemi, sun, fill, amb, skyMat = null, _scene = null, _renderer = null, _bg = null;
-  const PAL = {};          // 昼/夜色板（THREE.Color）
+  const PAL = {};          // 昼/夜/黄金时刻色板（THREE.Color）
   const tmpC = new THREE.Color();
 
   function buildPalette(C) {
-    const N = C.night;
+    const N = C.night, G = C.golden || {};
     PAL.fogD = new THREE.Color(C.fog);          PAL.fogN = new THREE.Color(N.fog);
+    PAL.fogG = new THREE.Color(G.fog !== undefined ? G.fog : C.fog);
     PAL.zenD = new THREE.Color(C.zenith);       PAL.zenN = new THREE.Color(N.zenith);
+    PAL.zenG = new THREE.Color(G.zenith !== undefined ? G.zenith : C.zenith);
     PAL.midD = new THREE.Color(C.mid);          PAL.midN = new THREE.Color(N.mid);
+    PAL.midG = new THREE.Color(G.mid !== undefined ? G.mid : C.mid);
     PAL.horD = new THREE.Color(C.horizon);      PAL.horN = new THREE.Color(N.horizon);
+    PAL.horG = new THREE.Color(G.horizon !== undefined ? G.horizon : C.horizon);
     PAL.clLD = new THREE.Color(C.cloudLight);   PAL.clLN = new THREE.Color(N.cloudLight);
+    PAL.clLG = new THREE.Color(G.cloudLight !== undefined ? G.cloudLight : C.cloudLight);
     PAL.clDD = new THREE.Color(C.cloudDark);    PAL.clDN = new THREE.Color(N.cloudDark);
+    PAL.clDG = new THREE.Color(G.cloudDark !== undefined ? G.cloudDark : C.cloudDark);
     PAL.hsD = new THREE.Color(C.hemiSky);       PAL.hsN = new THREE.Color(N.hemiSky);
+    PAL.hsG = new THREE.Color(G.hemiSky !== undefined ? G.hemiSky : C.hemiSky);
     PAL.hgD = new THREE.Color(C.hemiGround);    PAL.hgN = new THREE.Color(N.hemiGround);
+    PAL.hgG = new THREE.Color(G.hemiGround !== undefined ? G.hemiGround : C.hemiGround);
     PAL.sunD = new THREE.Color(C.sunColor);     PAL.sunN = new THREE.Color(N.sunColor);
+    PAL.sunG = new THREE.Color(G.sunColor !== undefined ? G.sunColor : C.sunColor);
   }
+  /* 三段插值：昼 → 黄金时刻 → 夜 */
+  function mix3(out, d, g, n, goldK, nightK) { out.copy(d).lerp(g, goldK).lerp(n, nightK); }
   function lerpPair(out, d, n, k) { out.copy(d).lerp(n, k); }
 
   W.build = function (scene, renderer, tier) {
@@ -63,12 +77,17 @@ window.Weather = (function () {
         uHorizon: { value: new THREE.Color(C.horizon) },
         uCloudLight: { value: new THREE.Color(C.cloudLight) },
         uCloudDark: { value: new THREE.Color(C.cloudDark) },
+        uSunPos: { value: new THREE.Vector3(0, 1, 0) },
+        uSunCol: { value: new THREE.Color(0xffd9a8) },
+        uSunVis: { value: 1 },
+        uNight: { value: 0 },
         uTime: uTime
       },
       vertexShader: `varying vec3 vDir; void main(){ vDir=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: `
         varying vec3 vDir;
-        uniform vec3 uZenith,uMid,uHorizon,uCloudLight,uCloudDark; uniform float uTime;
+        uniform vec3 uZenith,uMid,uHorizon,uCloudLight,uCloudDark,uSunPos,uSunCol;
+        uniform float uTime,uSunVis,uNight;
         float h21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
         float vn(vec2 p){ vec2 i=floor(p),f=fract(p); vec2 u=f*f*(3.0-2.0*f);
           return mix(mix(h21(i),h21(i+vec2(1.0,0.0)),u.x),mix(h21(i+vec2(0.0,1.0)),h21(i+vec2(1.0,1.0)),u.x),u.y); }
@@ -85,6 +104,19 @@ window.Weather = (function () {
           float k=smoothstep(0.02,0.20,h)*cov;
           col=mix(col,cloud,k*0.94);
           col=mix(col,uHorizon,exp(-max(h,0.0)*8.0)*0.30);
+          /* 星空：夜间高空稀疏点 */
+          if(uNight>0.02){
+            vec3 sp=vDir*118.0;
+            vec3 cell=floor(sp);
+            float hs=fract(sin(dot(cell,vec3(12.9898,78.233,45.164)))*43758.5453);
+            float star=step(0.9968,hs)*smoothstep(0.06,0.42,vDir.y);
+            col+=vec3(0.86,0.92,1.0)*star*uNight*1.4;
+          }
+          /* 日轮 + 光晕：低太阳角时自然出现"日出/日落" */
+          float sd=max(dot(vDir,normalize(uSunPos)),0.0);
+          col+=uSunCol*pow(sd,1400.0)*3.2*uSunVis;
+          col+=uSunCol*pow(sd,26.0)*0.34*uSunVis;
+          col+=uSunCol*pow(sd,4.0)*0.10*uSunVis;
           gl_FragColor=vec4(col,1.0);
           #include <tonemapping_fragment>
           #include <encodings_fragment>
@@ -172,41 +204,61 @@ window.Weather = (function () {
     const C = CFG.weather;
     uTime.value += dt;
 
-    // ---- 昼夜相位 ----
+    // ---- 昼夜相位：0=日出 0.25=正午 0.5=日落 0.75=午夜 ----
     W.dayT = (W.dayT + dt / C.dayLength) % 1;
     const ang = W.dayT * Math.PI * 2;                  // 0=日出
     const sunH = Math.sin(ang);                        // 太阳高度
-    W.daylight = UTIL.smoothstep(-0.08, 0.22, sunH);
+    W.sunHeight = sunH;
+    W.daylight = UTIL.smoothstep(-0.10, 0.20, sunH);
     const nightK = 1 - W.daylight;
+    /* 黄金时刻：太阳刚出/将落时天光转暖，正中天时暖色退去 */
+    W.goldenK = UTIL.smoothstep(-0.07, 0.09, sunH) * (1 - UTIL.smoothstep(0.10, 0.36, sunH));
+    const gold = W.goldenK;
 
-    // 太阳/月亮方位：东升西落
-    const az = C.sunDir[0] + Math.cos(ang) * 0.5;
-    const elev = Math.max(0.06, sunH * 0.62 + 0.10);
-    W.sunDir.set(az, elev, C.sunDir[2]).normalize();
+    /* 太阳轨迹：东升（+X）→ 偏南（+Z）→ 西落（-X）；夜里换成正对面的月光 */
+    const sx = Math.cos(ang);
+    const visual = W.sunVisual.set(sx * 0.96, sunH, 0.30 + 0.10 * Math.max(0, sunH)).normalize();
+    if (sunH > -0.02) {
+      W.sunDir.copy(visual);
+    } else {
+      W.sunDir.set(-sx * 0.96, Math.max(0.22, -sunH * 0.9), 0.30).normalize();
+    }
     if (sun) sun.position.copy(W.sunDir).multiplyScalar(1000);
 
     // 光强：昼全亮 / 夜月色微光
     const smoothD = W.daylight;
-    if (hemi) { hemi.intensity = 0.22 + 1.18 * smoothD; lerpPair(hemi.color, PAL.hsD, PAL.hsN, nightK); hemi.groundColor.copy(tmpC.copy(PAL.hgD).lerp(PAL.hgN, nightK)); }
-    if (sun) { sun.intensity = 0.14 + 0.91 * smoothD; sun.color.copy(tmpC.copy(PAL.sunD).lerp(PAL.sunN, nightK)); }
+    if (hemi) {
+      hemi.intensity = 0.22 + 1.18 * smoothD;
+      mix3(hemi.color, PAL.hsD, PAL.hsG, PAL.hsN, gold, nightK);
+      mix3(hemi.groundColor, PAL.hgD, PAL.hgG, PAL.hgN, gold, nightK);
+    }
+    if (sun) {
+      sun.intensity = (0.14 + 0.91 * smoothD) * (1 - 0.10 * gold);
+      mix3(sun.color, PAL.sunD, PAL.sunG, PAL.sunN, gold, nightK);
+    }
     if (fill) fill.intensity = 0.08 + 0.52 * smoothD;
     if (amb) amb.intensity = 0.14 + 0.41 * smoothD;
 
     // 雾与背景
-    if (W.fogColor) lerpPair(W.fogColor, PAL.fogD, PAL.fogN, nightK);
+    if (W.fogColor) mix3(W.fogColor, PAL.fogD, PAL.fogG, PAL.fogN, gold, nightK);
     W.fogDensity = C.fogDensity + (C.nightFogDensity - C.fogDensity) * nightK;
     if (_scene && _scene.fog) _scene.fog.density = W.fogDensity;
     if (_bg && _bg.isColor) _bg.copy(W.fogColor);
     // 夜间曝光压暗（环境贴图反光同步变暗，更真实）
-    if (_renderer) _renderer.toneMappingExposure = CFG.render.exposure * (0.62 + 0.38 * smoothD);
+    if (_renderer) _renderer.toneMappingExposure = CFG.render.exposure * (0.62 + 0.38 * smoothD) * (1 + 0.06 * gold);
 
     // 天空球色板
     if (skyMat) {
-      lerpPair(skyMat.uniforms.uZenith.value, PAL.zenD, PAL.zenN, nightK);
-      lerpPair(skyMat.uniforms.uMid.value, PAL.midD, PAL.midN, nightK);
-      lerpPair(skyMat.uniforms.uHorizon.value, PAL.horD, PAL.horN, nightK);
-      lerpPair(skyMat.uniforms.uCloudLight.value, PAL.clLD, PAL.clLN, nightK);
-      lerpPair(skyMat.uniforms.uCloudDark.value, PAL.clDD, PAL.clDN, nightK);
+      const u = skyMat.uniforms;
+      mix3(u.uZenith.value, PAL.zenD, PAL.zenG, PAL.zenN, gold, nightK);
+      mix3(u.uMid.value, PAL.midD, PAL.midG, PAL.midN, gold, nightK);
+      mix3(u.uHorizon.value, PAL.horD, PAL.horG, PAL.horN, gold, nightK);
+      mix3(u.uCloudLight.value, PAL.clLD, PAL.clLG, PAL.clLN, gold, nightK);
+      mix3(u.uCloudDark.value, PAL.clDD, PAL.clDG, PAL.clDN, gold, nightK);
+      u.uSunPos.value.copy(visual);
+      u.uSunCol.value.copy(PAL.sunD).lerp(PAL.sunG, gold);
+      u.uSunVis.value = UTIL.smoothstep(-0.05, 0.03, sunH) * (1 - 0.45 * nightK);
+      u.uNight.value = nightK;
     }
 
     // 夜间云更暗：利用现有 shader（色板已插值），无需改 shader

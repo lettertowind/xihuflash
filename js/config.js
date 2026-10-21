@@ -1,6 +1,6 @@
 /* 全部可调参数：改这里就能整体调节手感、天气与画质 */
 window.CFG = {
-  version: '2.0',
+  version: '2.2',
   render: {
     maxDPR: 1.5,
     exposure: 0.84,
@@ -12,8 +12,8 @@ window.CFG = {
   weather: {
     fog: 0xaeb9b5,
     fogDensity: 0.00078,
-    dayLength: 240,            // 一昼夜 = 现实 4 分钟
-    dayStart: 0.16,            // 开局时刻（0=日出，0.25=正午，0.5=日落，0.75=午夜）
+    dayLength: 300,            // 一昼夜 = 现实 5 分钟（v2：拉开日出/正午/日落/夜晚四段）
+    dayStart: 0.028,           // 开局时刻（0=日出，0.25=正午，0.5=日落，0.75=午夜）——开局即清晨日出
     lampOn: 0.5,               // 昼光低于此阈值时船灯点亮
     nightFogDensity: 0.00105,
     zenith: 0x5f7178,
@@ -41,11 +41,69 @@ window.CFG = {
     sunDir: [-0.35, 0.42, -0.84],
     fillColor: 0x9db3ae,
     fillIntensity: 0.6,
+    /* 黄金时刻（日出/日落低太阳角）暖色板：天空、雾、云、日光一起转暖 */
+    golden: {
+      fog: 0xd6ad86,
+      zenith: 0x4a6c8c,
+      mid: 0x9c8b86,
+      horizon: 0xf2b878,
+      cloudLight: 0xffd2a4,
+      cloudDark: 0x8a6558,
+      sunColor: 0xffa864,
+      hemiSky: 0xc9a98e,
+      hemiGround: 0x5b5140
+    },
     rainHigh: 5000,
     rainLow: 1500,
     rainCpu: 600,
     mistHigh: 6,
     mistLow: 2
+  },
+
+  /* 风力：随机风向 / 强度 / 持续时间；顺风提速、逆风减速、侧风把船吹偏 */
+  wind: {
+    enabled: true,
+    minDur: 13,              // 一阵风最短持续（秒）
+    maxDur: 34,              // 最长持续
+    minStrength: 2.2,        // m/s
+    maxStrength: 13.0,       // m/s（≈6 级强风）
+    speedGain: 0.30,         // 顺风最多 +30% 航速，逆风同比例
+    drift: 0.44,             // 侧风横推系数（× 风速 → m/s 漂移）——v2.2 由 0.20 上调
+    fade: 1.6,               // 换风时的过渡时间（秒）
+    /* v2.2 阵风：风力 ≥2 级时每隔几秒来一股，船会被明显推偏（"不时产生明显位移"） */
+    gustMin: 2.4,            // 两股阵风的最小间隔（秒）
+    gustMax: 6.2,            // 最大间隔
+    gustDur: [0.55, 1.5],    // 单股阵风持续（秒）
+    gustAmp: 2.1,            // 阵风叠加倍数（× 常规横推）
+    gustLevel: 2             // 达到此风力等级才开始打阵风
+  },
+
+  /* 上岸步行 */
+  walk: {
+    speed: 4.4,              // 常速 m/s
+    sprint: 7.4,             // 冲刺 m/s（消耗体力，与竞速模式同一套体力）
+    eye: 1.68,               // 眼高（人物身高约 1.78m，低着头能看到自己的腿）
+    radius: 0.44,            // 碰撞半径
+    boardDist: 24,           // 离船多近可「上船」（要 >= berthRange，否则下了船回不去）
+    berthRange: 14,          // 船离岸小于此距离才出现「下船」
+    shoreLimit: 0.9,         // 岸距小于此值算落水，禁止行走
+    stepUp: 1.15,            // 单步可跨越高差（米）
+    jumpV: 4.6,              // 起跳初速（m/s）
+    gravity: 13.5,           // 重力（m/s²）
+    bobAmp: 0.055,           // 行走时相机上下颠簸幅度
+    swayAmp: 0.032,          // 行走时相机左右摇摆幅度
+    sprintTouch: 0.72,       // 手机：摇杆前推超过该比例算冲刺
+    inland: 320              // 空气墙：离岸超过此距离（米）不可再往内陆走
+  },
+
+  /* 竞速模式：固定快档 + 体力加速 */
+  race: {
+    staminaMax: 100,
+    regen: 8.5,              // 每秒回复
+    drain: 26,               // 每秒消耗
+    minBoost: 8,             // 低于此值无法起步加速
+    boostSpeed: 104,         // 加速极速 ≈374km/h
+    boostAccel: 62
   },
 
   terrain: {
@@ -79,7 +137,15 @@ window.CFG = {
     reverse: -9,
     eye: [2.70, 1.46, 0],
     length: 9.2,
-    width: 2.2
+    width: 2.2,
+    /* v2 惯性：起步/收油都更"沉"，转向有舵重（航向角速度做一阶跟随） */
+    inertia: {
+      accel: 0.62,           // 加速跟随系数（1 = 旧版手感，越小越沉）
+      decel: 0.34,           // 收油/刹车跟随系数（越小滑行越远）
+      yaw: 3.4,              // 舵响应速度（越大越跟手）
+      steer: 6.0             // 摇舵平滑（原来 9，降低后打舵有过程）
+    },
+    bridgeAssist: 1.9        // 过桥自动回中强度（0 = 关）
   },
 
   /* 三档速度：Shift 循环切换（1 慢 / 2 快 / 3 自动巡航）
@@ -104,9 +170,9 @@ window.CFG = {
     accelSlow: 11,          // 慢档起步也要慢，别让"慢船"两秒就窜到满速
     accelFast: 27,
     accelCruise: 16,        // 三档提速（19.67→46）的加速度
-    lookAhead: 1.55,        // 巡航前视距离 = 速度 × 此系数（米）
-    lookMin: 26,
-    lookMax: 130,
+    lookAhead: 2.2,         // 巡航前视距离 = 速度 × 此系数（米）——转向有惯性，前视要留够
+    lookMin: 42,
+    lookMax: 170,
     cruiseTurn: 2.05,       // 巡航转向增益
     interp: 0.35             // 换档后动力爬升的平滑时间（秒）
   },

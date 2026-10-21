@@ -217,6 +217,12 @@ window.Trees = (function () {
       peach: [4, 9, 3, 7]
     };
 
+    /* 导出所有乔木的位置与尺度：供 walk.js 做树干碰撞与"别落在树冠底下"判定 */
+    T.list = [];
+    Object.keys(lists).forEach(kind => {
+      for (const t of lists[kind]) T.list.push({ x: t.x, z: t.z, s: t.s, kind: kind });
+    });
+
     function buildKind(kind) {
       const list = lists[kind];
       if (!list.length) return;

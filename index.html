@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>西湖极速</title>
+<title>湖光逐浪</title>
 <script>
   window.__errors = [];
-  function __log(m) { window.__errors.push(m); try { console.error('[西湖]', m); } catch (e) { } }
+  function __log(m) { window.__errors.push(m); try { console.error('[湖光]', m); } catch (e) { } }
   window.addEventListener('error', e => __log((e.message || '') + ' @' + ((e.filename || '').split('/').pop() || '') + ':' + (e.lineno || '')));
   window.addEventListener('unhandledrejection', e => __log('REJECT:' + ((e.reason && e.reason.message) || e.reason)));
   // 加载看门狗（脚本级）：25 秒仍未开始渲染则提示
@@ -187,7 +187,29 @@
   .pedal.on { background: rgba(168,208,192,.35); border-color: rgba(168,208,192,.7); }
   .pedal.gear { border-color: rgba(196,176,255,.55); color: #d8ccff; }
   .pedal.gear.on { background: rgba(170,150,255,.35); border-color: rgba(190,172,255,.85); }
+  .pedal.boost { display: none; border-color: rgba(120,214,255,.6); color: #cdf2ff; }
+  .pedal.boost.on { background: rgba(86,190,255,.38); border-color: rgba(160,232,255,.95); box-shadow: 0 0 22px rgba(96,196,255,.35); }
+  body.race .pedal.boost { display: flex; }
+  body.race #pgear { display: none; }
   #touchhint { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 10px; letter-spacing: .18em; opacity: .35; }
+  /* 手机端局内功能键：模式切换 / 上下船 / 跳跃（右侧竖排，避开鞋跟位置的加速踏板） */
+  #touchbtns { position: absolute; right: max(18px, env(safe-area-inset-right)); bottom: calc(214px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px; pointer-events: auto; }
+  .tbtn { width: 60px; height: 60px; border-radius: 50%; border: 1px solid rgba(255,255,255,.26);
+    background: rgba(16,26,26,.42); color: #e8f0ea; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; letter-spacing: .06em; line-height: 1.25; text-align: center; backdrop-filter: blur(6px);
+    touch-action: none; -webkit-tap-highlight-color: transparent; user-select: none;
+    transition: background .16s ease, border-color .16s ease, transform .12s ease; }
+  .tbtn.on { background: rgba(168,208,192,.42); border-color: rgba(190,232,214,.9); transform: scale(.94); }
+  .tbtn.mode { border-color: rgba(186,166,255,.55); color: #ddd4ff; }
+  .tbtn.jump { display: none; border-color: rgba(255,208,120,.6); color: #ffe6b8; font-size: 12px; }
+  body.walkmode .tbtn.jump { display: flex; }
+  body.walkmode .tbtn.boat { border-color: rgba(168,208,192,.8); }
+  @media (max-height: 500px) {
+    #touchbtns { bottom: calc(150px + env(safe-area-inset-bottom)); gap: 8px; }
+    .tbtn { width: 50px; height: 50px; font-size: 10px; }
+    .tbtn.jump { font-size: 11px; }
+  }
   #scene { touch-action: none; -webkit-tap-highlight-color: transparent; }
   body.touch #hint { display: none; }
 
@@ -198,6 +220,72 @@
     #hint { display: none; }
     #timer { top: 12px; } #mini { top: 12px; right: 12px; }
   }
+
+  /* ---------------- v2：模式选择 / 体力 / 风向 / 上下船 ---------------- */
+  .modesel { display: flex; gap: 10px; justify-content: center; margin: 24px 0 20px; flex-wrap: wrap; }
+  .mode {
+    pointer-events: auto; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 5px;
+    padding: 12px 22px; border: 1px solid rgba(255,255,255,.16); border-radius: 3px;
+    background: rgba(255,255,255,.04); color: #dfe7e0; font-family: inherit;
+    font-size: 13px; letter-spacing: .22em; transition: border-color .25s, background .25s, transform .2s;
+  }
+  .mode em { font-style: normal; font-size: 9.5px; letter-spacing: .06em; opacity: .5; }
+  .mode:hover { border-color: rgba(168,208,192,.45); transform: translateY(-1px); }
+  .mode.on { border-color: rgba(168,208,192,.8); background: rgba(168,208,192,.15); color: #f2fbf6; }
+  .mode.on em { opacity: .72; color: #bfe6d8; }
+
+  /* 体力条（竞速模式，右下角，替换普通档位条） */
+  #stamina { display: none; margin-top: 10px; width: 168px; height: 7px; border-radius: 4px;
+    background: rgba(255,255,255,.14); overflow: hidden; margin-left: auto; box-shadow: inset 0 0 6px rgba(0,0,0,.35); }
+  #staminafill { height: 100%; width: 100%; border-radius: 4px;
+    background: linear-gradient(90deg,#2f97d8,#63d0ff 60%,#c8f4ff); transition: width .09s linear; }
+  #stamina.low #staminafill { background: linear-gradient(90deg,#b4552f,#e08a4a); }
+  #staminalabel { display: none; font-size: 9px; letter-spacing: .3em; opacity: .55; margin-top: 5px; }
+  body.race #stamina, body.race #staminalabel { display: block; }
+  body.race #boostwrap, body.race #boostlabel { display: none; }
+  /* 上岸步行也用同一套体力（冲刺消耗 / 静走回复） */
+  body.walkmode #stamina, body.walkmode #staminalabel { display: block; }
+  body.walkmode #boostwrap, body.walkmode #boostlabel { display: none; }
+
+  /* 风向 / 风力开关 */
+  #windbox { position: absolute; right: 26px; bottom: 152px; display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px 7px; border-radius: 999px; background: rgba(16,24,24,.38);
+    border: 1px solid rgba(214,226,218,.14); font-size: 10.5px; letter-spacing: .12em; backdrop-filter: blur(8px); }
+  #windbox.off { opacity: .38; }
+  /* 阵风：2 级以上忽然来一股时面板脉冲一下，提示"船被推了一把" */
+  #windbox.gust { border-color: rgba(150,210,255,.7); box-shadow: 0 0 18px rgba(110,190,255,.42); }
+  #windbox.gust #windarrow { color: #e2f4ff; }
+  #windarrow { font-size: 13px; line-height: 1; color: #bfe6ff; transition: transform .5s ease; display: inline-block; }
+  #windbox.off #windarrow { color: #9aa6a4; }
+  #windtog { position: absolute; left: 22px; bottom: 56px; pointer-events: auto; cursor: pointer; font-size: 10px;
+    letter-spacing: .2em; opacity: .45; border: 1px solid rgba(255,255,255,.18); padding: 5px 9px;
+    border-radius: 3px; background: transparent; color: #eef2ec; font-family: inherit; }
+  #windtog:hover { opacity: .8; }
+  body.touch #windtog { left: 74px; right: auto; top: 110px; bottom: auto; }
+  body.touch #windbox { right: 12px; bottom: 150px; font-size: 9.5px; padding: 5px 10px 6px; }
+
+  /* 上下船按钮 */
+  #boatbtns { position: absolute; left: 50%; bottom: 104px; transform: translate(-50%, 10px);
+    display: flex; gap: 12px; opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease; }
+  #boatbtns.show { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+  #boatbtns button { pointer-events: auto; cursor: pointer; padding: 13px 34px; border-radius: 3px;
+    border: 1px solid rgba(168,208,192,.7); background: rgba(20,32,30,.72); color: #eef6f0;
+    font-family: inherit; font-size: 14px; letter-spacing: .3em; backdrop-filter: blur(8px);
+    box-shadow: 0 8px 26px rgba(0,0,0,.32); display: none; }
+  #boatbtns button.on { display: inline-block; }
+  #boatbtns button:hover { background: rgba(48,80,72,.82); }
+  body.touch #boatbtns { bottom: calc(196px + env(safe-area-inset-bottom)); }
+  body.touch #boatbtns button { padding: 15px 30px; font-size: 15px; }
+  @media (max-height: 500px) {
+    body.touch #boatbtns { bottom: calc(150px + env(safe-area-inset-bottom)); }
+    body.touch #boatbtns button { padding: 11px 24px; font-size: 13px; }
+    body.touch #windbox { bottom: 108px; top: auto; right: 10px; }
+    /* 音效 / 风力 并排在左上，避免压住右上角小地图（v2.2） */
+    body.touch #windtog { top: 110px; left: 74px; right: auto; }
+    .modesel { margin: 12px 0 12px; } .mode { padding: 8px 14px; font-size: 12px; }
+  }
+  /* 结算面板：竞速/自由模式的说明行 */
+  #rmode { font-size: 10px; letter-spacing: .28em; opacity: .5; margin-top: 8px; }
 
   /* ---------------- 手机 / 矮屏适配（开始按钮必须始终可见可点） ---------------- */
   @media (max-height: 640px) {
@@ -249,6 +337,10 @@
     #visit { left: 14px; }
     body.touch #mini { width: 84px; padding: 5px; }
     body.touch #minimap { width: 74px; height: 74px; }
+    /* 结算面板：4 列统计在窄屏放不下，改成 2×2 网格，否则左右两项会被裁掉 */
+    .resultstats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; margin: 16px 0 18px; }
+    .resultstats .stat { min-width: 0; }
+    #result .panel { padding: 20px 20px 16px; }
   }
 
   /* ---------------- 手机横屏（矮屏）：所有触控件与 HUD 都缩一档 ---------------- */
@@ -310,32 +402,45 @@
       <div id="speedunit">KM / H</div>
       <div id="boostwrap"><div id="boostfill"></div></div>
       <div id="boostlabel">档位 · SHIFT</div>
+      <div id="stamina"><div id="staminafill"></div></div>
+      <div id="staminalabel">体力 · 加速 SHIFT</div>
     </div>
-    <div id="hint">W 油门 · S 减速 · A/D 转向<br>Shift 换档（慢 / 快 / 自动巡航） · 移动鼠标环视<br>点击回正 · V 视角 · F 结算 · R 重来</div>
+    <div id="windbox"><span id="windarrow">➤</span><span id="windtxt">无风</span></div>
+    <div id="hint">W 油门 · S 减速 · A/D 转向 · Shift 换档（竞速时冲刺）<br>移动鼠标环视 · 点击回正 · <b>M 切换模式</b> · <b>K 上下船</b> · G 风力 · V 视角 · F 结算 · R 重来 · N 音效<br>上岸：WASD 行走 · 空格跳跃 · 按住 Shift 冲刺（消耗体力）</div>
     <div id="wrong">方向错了 · 调头</div>
     <div id="toast"><div id="toastTitle"></div><div id="toastSub"></div></div>
     <div id="countdown"></div>
     <div id="flash"></div>
     <button id="mute">音效 开</button>
+    <button id="windtog">风力 开</button>
+  </div>
+
+  <div id="boatbtns">
+    <button id="disembark">下 船</button>
+    <button id="board">上 船</button>
   </div>
 
   <div id="labels"><svg id="leaders"></svg></div>
 
   <div id="start">
     <div class="panel">
-      <div class="kicker">West Lake · Hangzhou · v1.6</div>
-      <h1>西湖<em>极速</em></h1>
-      <div class="sub">烟雨江南 · 摇橹乌篷 · 环湖探访二十三处胜景<br>三档船速切换 · 三档自动巡航，回到起点码头自动结算</div>
+      <div class="kicker">West Lake · Hangzhou · v2.2</div>
+      <h1>湖光<em>逐浪</em></h1>
+      <div class="sub">烟雨江南 · 摇橹乌篷 · 日出日落里的二十三处胜景<br>自由探访或竞速冲刺，靠岸可下船漫步湖堤</div>
       <div class="stats">
         <div class="stat"><b id="st-km">8.7</b><span>KM 湖程</span></div>
-        <div class="stat"><b id="st-visit">17</b><span>处 名 胜</span></div>
+        <div class="stat"><b id="st-visit">23</b><span>处 名 胜</span></div>
         <div class="stat"><b id="st-best">—</b><span>最佳探访</span></div>
       </div>
+      <div class="modesel" id="modesel">
+        <button class="mode on" data-mode="free">自由模式<em>三档船速 · 不限时 · 随处上岸</em></button>
+        <button class="mode" data-mode="race">竞速模式<em>固定快船 · 体力加速 · 计时结算</em></button>
+      </div>
       <div class="keys keyboard">
-        <i>W / ↑ 油门</i><i>S / ↓ 减速</i><i>A D 转向</i><i>Shift 换档</i><i>鼠标移动 环视</i><i>点击 回正</i><i>V 视角</i><i>F 结算</i><i>R 重来</i><i>M 音效</i>
+        <i>W / ↑ 油门</i><i>S / ↓ 减速</i><i>A D 转向</i><i>Shift 换档 / 加速</i><i>K 上下船</i><i>M 切换模式</i><i>空格 跳跃</i><i>G 风力</i><i>V 视角</i><i>F 结算</i><i>R 重来</i><i>N 音效</i>
       </div>
       <div class="keys touchkeys">
-        <i>摇杆小幅 转向</i><i>摇杆推到底 前进</i><i>三档前拉 提速</i><i>紫色键 换档</i><i>拖屏 环视</i><i>点屏 回正</i>
+        <i>摇杆小幅 转向</i><i>摇杆推到底 前进 / 冲刺</i><i>右侧圆键 模式 / 上下船 / 跳跃</i><i>拖屏 环视</i><i>下船 上岸</i>
       </div>
       <button class="btn" id="startbtn">开 始 游 湖</button>
     </div>
@@ -346,8 +451,9 @@
       <div class="kicker">航 程 结 算</div>
       <div class="time" id="rtime">00:00.00</div>
       <div class="newbest" id="rnew"></div>
+      <div id="rmode"></div>
       <div class="resultstats">
-        <div class="stat"><b id="rvisit">0 / 17</b><span>探访名胜</span></div>
+        <div class="stat"><b id="rvisit">0 / 23</b><span>探访名胜</span></div>
         <div class="stat"><b id="rdist">0.00 km</b><span>航行里程</span></div>
         <div class="stat"><b id="rtop">0 km/h</b><span>最高航速</span></div>
         <div class="stat"><b id="rcoll">0</b><span>碰撞次数</span></div>
@@ -359,16 +465,22 @@
 
   <div id="touch">
     <div id="stick"><div class="knob"></div></div>
+    <div id="touchbtns">
+      <div class="tbtn mode" id="pmode">模式</div>
+      <div class="tbtn boat" id="pkboat">上下船</div>
+      <div class="tbtn jump" id="pjump">跳</div>
+    </div>
     <div id="pedals">
       <div class="pedal gear" id="pgear">换档</div>
+      <div class="pedal boost" id="pboost">加速</div>
     </div>
-    <div id="touchhint">摇杆小幅转向 · 推过虚线前进 · 换档</div>
+    <div id="touchhint">摇杆小幅转向 · 推过虚线前进 · 右侧 模式 / 上下船 / 跳跃</div>
   </div>
 
   <div id="rotate"><div class="ic">⟳</div><div class="t">请 横 屏 游 玩</div><div class="s">ROTATE YOUR DEVICE</div><button id="rotbtn">仍 然 继 续</button></div>
 
   <div id="loading"><div class="box">
-    <div class="t">西 湖 极 速</div>
+    <div class="t">湖 光 逐 浪</div>
     <div class="bar"><i id="lbar"></i></div>
     <div class="s" id="lmsg">正在铺开烟雨…</div>
   </div></div>
@@ -385,6 +497,7 @@
 <script src="js/course-data.js"></script>
 <script src="js/config.js"></script>
 <script src="js/util.js"></script>
+<script src="js/wind.js"></script>
 <script src="js/textures.js"></script>
 <script src="js/photo-assets.js"></script>
 <script src="js/quality.js"></script>
@@ -397,6 +510,8 @@
 <script src="js/landmarks.js"></script>
 <script src="js/boat-model.js"></script>
 <script src="js/boat.js"></script>
+<script src="js/walk.js"></script>
+<script src="js/guide.js"></script>
 <script src="js/traffic.js"></script>
 <script src="js/birds.js"></script>
 <script src="js/scream-assets.js"></script>

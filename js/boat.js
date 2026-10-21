@@ -32,51 +32,69 @@ window.Boat = (function () {
     headLight.position.set(4.0, 1.6, 0.58);
     group.add(headLight);
 
-    /* ---------------- 船头探照灯：锥形光束 ----------------
-       湖面用的是自定义 shader，不参与常规光照，所以单加 SpotLight 照不亮水面。这里三层叠：
-         ① SpotLight —— 真实投射，照亮沿岸景物、别的船、船上人物
-         ② 水面光斑（XZ 平面）—— 第一视角主要看到的"前方一片被照亮"，锥形展开、边缘高斯柔化
-         ③ 竖直光带（XY 平面）—— 侧视/第三人称时的雾中光柱轮廓
-       ②③ 用同一个 shader、十字交叉摆放。不用实心圆锥壳：相机在第一视角时位于锥体内部，
-       从内部看锥壳会变成一个"甜甜圈"状的环，既不像光柱也不自然。
-       强度统一乘 Weather.lampK()：白天为 0 整组不可见；雾越浓散射越强，光柱越实。 */
-    const BEAM_LEN = 58, BEAM_HALF = 18;      // 半角约 0.30rad，58m 处半径 ≈ 17.9m
+    /* ---------------- 船头灯：三层自然光表现 ----------------
+       旧版除 SpotLight 外还叠了一条"竖直光带"（矩形平面），第一视角里正好横在眼前，
+       看起来就是一条生硬的白线。v2 删掉光带，改成：
+         ① SpotLight —— 真实投射，照亮沿岸景物、别的船
+         ② 水面光池 —— 贴水的椭圆柔光（横向高斯 + 远端幂次衰减 + 波纹扰动），
+            光斑边界柔和地融进水里，而不是一条直边
+         ③ 灯头光晕 —— billboard 光球，让灯"看起来在发光"
+       强度统一乘 Weather.lampK()：白天为 0 整组不可见，夜里随雾浓度更明显。 */
+    const BEAM_LEN = 62, BEAM_WIDE = 46;
     const headSpot = new THREE.SpotLight(0xffd7a8, 0, 95, 0.30, 0.88, 1.45);
     headSpot.position.set(4.05, 1.72, 0.0);
     headSpot.target.position.set(64, 0.10, 0);       // target 也在 group 内，自动跟船首方向
     group.add(headSpot);
     group.add(headSpot.target);
 
-    /* 光锥着色器：uv.x = 沿光束（0 船头 → 1 远端），uv.y = 横向
-       横向用高斯核做"边缘柔和过渡"，轴向用幂次衰减做"随距离自然衰减"，
-       再叠一层沿轴流动的细纹，避免整块光斑板结 */
+    /* 光晕贴图：径向暖光 */
+    function haloTexture() {
+      const c = UTIL.canvas(128, 128), g = c.getContext('2d');
+      const gr = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+      gr.addColorStop(0, 'rgba(255,228,182,0.95)');
+      gr.addColorStop(0.25, 'rgba(255,198,120,0.52)');
+      gr.addColorStop(0.62, 'rgba(255,170,80,0.16)');
+      gr.addColorStop(1, 'rgba(255,150,60,0)');
+      g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+      const t = new THREE.CanvasTexture(c);
+      t.needsUpdate = true;
+      return t;
+    }
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTexture(), transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, fog: false
+    }));
+    halo.scale.set(2.6, 2.6, 1);
+    halo.position.set(4.30, 0.72, 0.95);
+    group.add(halo);
+
+    /* 水面光池：uv.x 沿光束（0 船头 → 1 远端），uv.y 横向
+       横向高斯让两侧自然淡出，轴向幂次衰减让远端融进夜雾，再叠一层缓慢波纹打碎光面 */
     const beamMat = new THREE.ShaderMaterial({
       uniforms: {
         uColor: { value: new THREE.Color(0xffd9a6) },
         uStrength: { value: 0 },
-        uTime: { value: 0 },
-        uEdge: { value: 26.0 }                    // 波纹密度，竖直/水面两片可分别调
+        uTime: { value: 0 }
       },
       vertexShader: [
         'varying vec2 vUv;',
         'void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }'
       ].join('\n'),
       fragmentShader: [
-        'uniform vec3 uColor; uniform float uStrength; uniform float uTime; uniform float uEdge;',
+        'uniform vec3 uColor; uniform float uStrength; uniform float uTime;',
         'varying vec2 vUv;',
         'void main() {',
         '  float t = clamp(vUv.x, 0.0, 1.0);',
         '  float lat = (vUv.y - 0.5) * 2.0;',
-        '  float spread = 0.10 + 0.90 * t;',            // 锥形：越远越宽
-        '  float d = abs(lat) / spread;',                // 0 = 中轴，1 = 锥边
-        '  float lateral = exp(-d * d * 3.4);',          // 高斯横向：中心亮、边缘软
-        '  float core = exp(-d * d * 15.0) * 0.55;',     // 中轴再加一道亮带，别糊成一团
-        '  float cut = smoothstep(1.0, 0.82, d);',       // 锥边再切一刀，去掉硬角
-        '  float axial = pow(1.0 - t, 1.30);',           // 距离衰减
-        // 水面波纹 / 雾的密度起伏，把光斑打碎，别像一块塑料片
-        '  float rip = 0.76 + 0.24 * sin(lat * 9.0 + uTime * 1.8)',
-        '                         * sin(t * 30.0 - uTime * 2.4 + lat * 3.0);',
-        '  float a = (lateral + core) * cut * axial * rip * uStrength;',
+        '  float spread = 0.34 + 0.66 * t;',                 // 越远越宽（扇形）
+        '  float e = lat / spread;',
+        '  float pool = exp(-e * e * 2.2);',                  // 横向高斯：中间亮、两侧柔
+        '  float axial = pow(1.0 - t, 1.45) * smoothstep(0.0, 0.06, t);',
+        '  float ripple = 0.84 + 0.16 * sin(lat * 7.0 + uTime * 1.9)',
+        '                          * sin(t * 15.0 - uTime * 1.5 + lat * 3.4);',
+        '  float near = 1.0 + 0.35 * exp(-t * 7.0);',          // 灯下更亮一点
+        '  float a = pool * axial * ripple * near * uStrength;',
+        '  if (a <= 0.002) discard;',
         '  gl_FragColor = vec4(uColor, a);',
         '}'
       ].join('\n'),
@@ -87,26 +105,15 @@ window.Boat = (function () {
       fog: false
     });
 
-    /* ② 水面光斑：贴水面的锥形亮区，第一视角的主力观感 */
-    const waterSpot = new THREE.Mesh(new THREE.PlaneGeometry(BEAM_LEN, BEAM_HALF * 2), beamMat);
+    /* ② 水面光池：贴水面的柔光斑，第一视角的主力观感 */
+    const waterSpot = new THREE.Mesh(new THREE.PlaneGeometry(BEAM_LEN, BEAM_WIDE), beamMat);
     waterSpot.rotation.x = -Math.PI / 2;
-    waterSpot.position.set(BEAM_LEN / 2 + 3.9, 0.15, 0);
+    waterSpot.position.set(BEAM_LEN / 2 + 4.0, 0.13, 0);
     waterSpot.frustumCulled = false;
     waterSpot.renderOrder = 5;
     const spotPivot = new THREE.Group();
     spotPivot.add(waterSpot);
     scene.add(spotPivot);
-
-    /* ③ 竖直光带：侧视时看得到的雾中光柱（与水面那片交叉成十字） */
-    const beamMatV = beamMat.clone();
-    beamMatV.uniforms = THREE.UniformsUtils.clone(beamMat.uniforms);
-    beamMatV.uniforms.uStrength.value = 0;
-    beamMatV.uniforms.uEdge.value = 18.0;
-    const beamWall = new THREE.Mesh(new THREE.PlaneGeometry(BEAM_LEN, BEAM_HALF * 2), beamMatV);
-    beamWall.position.set(BEAM_LEN / 2 + 3.9, 1.72, 0);
-    beamWall.frustumCulled = false;
-    beamWall.renderOrder = 4;
-    group.add(beamWall);
 
     /* 尾迹 */
     const MAXW = 240;
@@ -169,9 +176,12 @@ window.Boat = (function () {
         '  float edge = smoothstep(0.0,0.34,vUv.x)*smoothstep(1.0,0.60,vUv.x);' +   // 横向两侧淡出
         '  float fade = smoothstep(1.0,0.42,vUv.y);' +                              // 越往后越淡
         '  float streak = 0.52+0.48*sin((vUv.y*6.0-uT*2.6)*6.2832);' +              // 流动水纹
-        '  float a = uA*edge*fade*(0.48+0.62*streak);' +
+        '  float n1 = sin(vUv.y*42.0 - uT*7.0 + vUv.x*11.0)*0.5+0.5;' +             // 碎浪颗粒
+        '  float n2 = sin(vUv.y*15.0 + uT*2.1 - vUv.x*5.0)*0.5+0.5;' +
+        '  float foam = 0.42+0.58*(n1*0.55+n2*0.45);' +
+        '  float a = uA*edge*fade*(0.34+0.72*streak)*foam;' +
         '  if(a<=0.001) discard;' +
-        '  gl_FragColor = vec4(1.0,1.0,1.0, a); }'
+        '  gl_FragColor = vec4(0.97,0.99,1.0, a); }'
     });
     const bowWave = new THREE.Mesh(bwGeo, bwMat);
     bowWave.name = 'bowwave';
@@ -211,24 +221,99 @@ window.Boat = (function () {
     }
     updateBowWave(0, 0);
 
-    /* 水花 */
-    const NP = 190;
-    const sp = new Float32Array(NP * 3), salpha = new Float32Array(NP);
+    /* ---------------- 船首飞溅水帘（v2 重做破浪） ----------------
+       两条从船首沿舷侧向后铺开的"水帘"：越靠近船首越猛地掀起，向后逐渐落下、
+       化进尾迹。顶点每帧按实际速度重算（越长、越高、越白），贴水面不跟船体俯仰。 */
+    const SHSEG = 16;
+    const shVerts = 2 * (SHSEG + 1) * 2;
+    const shPos = new Float32Array(shVerts * 3);
+    const shUv = new Float32Array(shVerts * 2);
+    const shIdx = [];
+    for (let s = 0; s < 2; s++) {
+      const base = s * (SHSEG + 1) * 2;
+      for (let k = 0; k < SHSEG; k++) {
+        const a = base + k * 2, b = a + 1, c = a + 2, d = a + 3;
+        shIdx.push(a, b, c, b, d, c);
+      }
+    }
+    for (let i = 0; i < shVerts; i++) {
+      shUv[i * 2] = (i % 2) ? 1 : 0;                 // 0 = 内缘（贴舷），1 = 外缘（浪峰）
+      shUv[i * 2 + 1] = Math.floor(i / 2) / SHSEG;   // 0 = 船首，1 = 后方
+    }
+    const shGeo = new THREE.BufferGeometry();
+    shGeo.setAttribute('position', new THREE.BufferAttribute(shPos, 3));
+    shGeo.setAttribute('uv', new THREE.BufferAttribute(shUv, 2));
+    shGeo.setIndex(shIdx);
+    shGeo.setDrawRange(0, shIdx.length);
+    const shMat = new THREE.ShaderMaterial({
+      uniforms: { uA: { value: 0 }, uT: { value: 0 } },
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: 'varying vec2 vUv;' +
+        'void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: 'uniform float uA; uniform float uT; varying vec2 vUv;' +
+        'void main(){' +
+        '  float head = smoothstep(0.0,0.10,vUv.y);' +
+        '  float tail = 1.0-smoothstep(0.55,1.0,vUv.y);' +
+        '  float n = sin(vUv.y*34.0-uT*6.5+vUv.x*7.0)*0.5+0.5;' +
+        '  float n2 = sin(vUv.y*11.0+uT*2.4)*0.5+0.5;' +
+        '  float a = uA*head*tail*(0.34+0.66*(n*0.6+n2*0.4));' +
+        '  if(a<=0.002) discard;' +
+        '  gl_FragColor = vec4(0.98,1.0,1.0, a*0.72); }'
+    });
+    const spraySheet = new THREE.Mesh(shGeo, shMat);
+    spraySheet.frustumCulled = false;
+    spraySheet.renderOrder = 5;
+    scene.add(spraySheet);
+
+    function updateSpraySheet(k, t) {
+      /* 浪峰必须低于第一视角眼位（1.46m），否则高速时会糊成一堵白墙挡住视线 */
+      const apex = 5.6 + k * 0.8;
+      const len = 3.0 + 6.0 * k;
+      const spread = 1.25 + 1.9 * k;
+      const height = 0.26 + 0.95 * k * k;
+      for (let s = 0; s < 2; s++) {
+        const sg = s === 0 ? 1 : -1;
+        const base = s * (SHSEG + 1) * 2;
+        for (let i = 0; i <= SHSEG; i++) {
+          const q = i / SHSEG;
+          const x = apex - Math.pow(q, 1.25) * len;
+          const zc = sg * (0.78 + q * spread);
+          /* 浪峰：船首最高，向后单调回落、化进尾迹 */
+          const arc = Math.pow(1 - q, 1.55);
+          const yOut = 0.08 + arc * height;
+          const yIn = 0.06 + arc * height * 0.38;
+          const a = base + i * 2;
+          shPos[a * 3] = x; shPos[a * 3 + 1] = yIn; shPos[a * 3 + 2] = zc * 0.82;
+          shPos[(a + 1) * 3] = x; shPos[(a + 1) * 3 + 1] = yOut; shPos[(a + 1) * 3 + 2] = zc;
+        }
+      }
+      shGeo.attributes.position.needsUpdate = true;
+      shMat.uniforms.uA.value = 0.06 + 0.94 * k;
+      shMat.uniforms.uT.value = t;
+    }
+    updateSpraySheet(0, 0);
+
+    /* 水花颗粒（飞沫）：大小不一、带重力与风偏 */
+    const NP = 300;
+    const sp = new Float32Array(NP * 3), salpha = new Float32Array(NP), ssize = new Float32Array(NP);
     const sg = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
     sg.setAttribute('aA', new THREE.BufferAttribute(salpha, 1));
+    sg.setAttribute('aSize', new THREE.BufferAttribute(ssize, 1));
     const sprayMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false,
-      vertexShader: 'attribute float aA; varying float vA;' +
-        'void main(){ vA=aA; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=54.0/max(1.0,-mv.z); gl_Position=projectionMatrix*mv; }',
+      vertexShader: 'attribute float aA; attribute float aSize; varying float vA;' +
+        'void main(){ vA=aA; vec4 mv=modelViewMatrix*vec4(position,1.0);' +
+        ' gl_PointSize=(26.0*aSize)/max(1.0,-mv.z); gl_Position=projectionMatrix*mv; }',
       fragmentShader: 'varying float vA;' +
-        'void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5) discard; float a=smoothstep(0.5,0.05,r)*vA; gl_FragColor=vec4(0.94,0.98,1.0,a*0.8); }'
+        'void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d); if(r>0.5) discard;' +
+        ' float a=smoothstep(0.5,0.04,r)*vA; gl_FragColor=vec4(0.93,0.975,1.0,a*0.85); }'
     });
     const spray = new THREE.Points(sg, sprayMat);
-    spray.frustumCulled = false; spray.renderOrder = 4;
+    spray.frustumCulled = false; spray.renderOrder = 6;
     scene.add(spray);
     const parts = [];
-    for (let i = 0; i < NP; i++) parts.push({ life: 0, x: 0, y: -100, z: 0, vx: 0, vy: 0, vz: 0 });
+    for (let i = 0; i < NP; i++) parts.push({ life: 0, max: 1, x: 0, y: -100, z: 0, vx: 0, vy: 0, vz: 0, sz: 1 });
 
     const state = {
       x: 0, z: 0, heading: 0, speed: 0,
@@ -238,7 +323,8 @@ window.Boat = (function () {
       lookYaw: 0, lookPitch: 0,
       view: 'first', capRoll: 0, capsizeT: 0, capsizeDir: 1, panic: 0,
       collisions: 0, topSpeed: 0, distance: 0,
-      wakeHist: [], wakeTimer: 0, count: 0, hitCool: 0, sprayAcc: 0, bounces: 0, float: 0
+      wakeHist: [], wakeTimer: 0, count: 0, hitCool: 0, sprayAcc: 0, bounces: 0, float: 0,
+      yawRate: 0, boosting: false, boostFuel: 1, moored: false
     };
 
     B.state = state;
@@ -286,6 +372,7 @@ window.Boat = (function () {
       state.wakeHist.length = 0; state.throttle = 0; state.steer = 0; state.hitCool = 0;
       state.lookYaw = 0; state.lookPitch = 0; state.sprayAcc = 0; state.bounces = 0; state.float = 0;
       state.capsizeT = 0; state.capRoll = 0; state.panic = 0;
+      state.yawRate = 0; state.boosting = false; state.boostFuel = 1; state.moored = false;
       group.position.set(x, 0, z); group.rotation.set(0, -heading, 0);
     };
 
@@ -303,15 +390,26 @@ window.Boat = (function () {
     B.forward = function () { return [Math.cos(state.heading), Math.sin(state.heading)]; };
 
     B.update = function (dt, input, navigable) {
+      /* 入口消毒：上游任何 NaN（如自动驾驶漏字段）都不许灌进物理链，
+         否则 speed=NaN 会让 |speed|<1.5 恒假，卡死检测全部失效、船永久冻结。 */
+      let _cc = input.cruiseCap;
+      if (_cc != null && !isFinite(_cc)) _cc = null;
+      if (!isFinite(input.throttle)) input.throttle = 0;
+      if (!isFinite(input.steer)) input.steer = 0;
       /* --- 三档速度：档位决定速度上限与动力，特效由实际速度决定 --- */
       const gear = state.gear;
+      const IN = C.inertia || { accel: 1, decel: 1, yaw: 3.4, steer: 9 };
+      const boosting = !!input.boost && gear === 2 && state.boostFuel > 0;
+      state.boosting = boosting;
       let cap, accel;
-      if (gear === 3) {
+      if (boosting) {
+        cap = CFG.race.boostSpeed; accel = CFG.race.boostAccel;
+      } else if (gear === 3) {
         /* 三档：巡航默认走 cruiseSlow；input.cruiseCap 由 game.js 按平台给定上限——
            电脑按 W → cruiseFast(82)，手机前拉摇杆 → cruiseBoost(46)；
            两者都只是换一个"封顶值"，速度爬到上限后停住，不会越界。 */
-        cap = input.cruiseCap != null ? input.cruiseCap : GR.cruiseSlow;
-        accel = input.cruiseCap != null && input.cruiseCap > GR.cruiseSlow ? GR.accelCruise : GR.accelSlow;
+        cap = _cc != null ? _cc : GR.cruiseSlow;
+        accel = _cc != null && _cc > GR.cruiseSlow ? GR.accelCruise : GR.accelSlow;
       } else if (gear === 2) {
         cap = GR.fast; accel = GR.accelFast;
       } else {
@@ -320,30 +418,96 @@ window.Boat = (function () {
       // 换档时动力爬升做一点平滑，避免瞬间"跳速"
       state.boostMix += ((gear === 2 ? 1 : 0) - state.boostMix) * Math.min(1, dt / GR.interp);
 
-      /* --- 油门与转向 --- */
+      /* --- 油门与转向（v2 增大惯性：推力/阻力/舵角都做一阶跟随） --- */
       state.throttle += (input.throttle - state.throttle) * Math.min(1, dt * 7);
-      state.steer += (input.steer - state.steer) * Math.min(1, dt * 9);
+      state.steer += (input.steer - state.steer) * Math.min(1, dt * (IN.steer || 9));
+      /* 系泊（玩家上岸）：船停在原地，不响应油门也不被风吹走 */
+      if (state.moored) {
+        state.throttle = 0; state.steer = 0;
+        state.speed += (0 - state.speed) * Math.min(1, dt * 6);
+      }
 
-      const target = state.throttle * cap;
+      /* 风：顺风提速、逆风减速（系数 0.7~1.3） */
+      const windF = (window.Wind && Wind.on) ? Wind.speedFactor(state.heading) : 1;
+      const target = state.throttle * cap * windF;
       if (target > state.speed) {
-        state.speed += (target - state.speed) * Math.min(1, dt * (accel / 22) * (0.5 + 0.5 * state.throttle) * 1.35);
+        state.speed += (target - state.speed) *
+          Math.min(1, dt * (accel / 22) * (0.5 + 0.5 * state.throttle) * 1.35 * (IN.accel || 1));
       } else {
-        state.speed += (target - state.speed) * Math.min(1, dt * 2.6);
+        /* 主动减速（S）比自然滑行快；松开油门则长时间保持航速 = 惯性 */
+        const dec = (state.throttle < -0.02 ? 2.1 : 2.6 * (IN.decel || 1));
+        state.speed += (target - state.speed) * Math.min(1, dt * dec);
       }
       state.speed = Math.max(C.reverse, state.speed);
       if (state.speed > state.topSpeed) state.topSpeed = state.speed;
 
+      /* NaN 兜底：一旦速度/航向变成 NaN，船会永久"粘"在原地——自动巡航里
+         表现为卡死（|NaN|<1.5 恒为 false，自救与硬恢复都不会触发）。
+         这里记录现场并复位，宁可丢一帧也不能让船锁死。 */
+      if (!isFinite(state.speed) || !isFinite(state.heading) || !isFinite(state.x) || !isFinite(state.z)) {
+        window.__nanCount = (window.__nanCount || 0) + 1;
+        window.__nanInfo = {
+          sp: String(state.speed), hd: String(state.heading), x: String(state.x), z: String(state.z),
+          thr: String(state.throttle), steer: String(state.steer), yawRate: String(state.yawRate),
+          cap: String(cap), accel: String(accel), wind: (window.Wind && Wind.on) ? String(Wind.strength) : 'off',
+          gear: gear, dt: String(dt)
+        };
+        if (!isFinite(state.speed)) state.speed = 0;
+        if (!isFinite(state.heading)) state.heading = 0;
+        if (!isFinite(state.yawRate)) state.yawRate = 0;
+        if (!isFinite(state.steer)) state.steer = 0;
+        if (!isFinite(state.throttle)) state.throttle = 0;
+        if (!isFinite(state.x)) state.x = C.start ? C.start.x : 0;
+        if (!isFinite(state.z)) state.z = C.start ? C.start.z : 0;
+      }
       const sp = Math.abs(state.speed);
       /* 速度强度 0..1：一档跑满约 0.42、二档跑满 1.0 —— 决定 FOV、水花、尾迹、船头分水与眼位 */
       const spN = UTIL.clamp((sp - GR.slow * 0.45) / (GR.fast - GR.slow * 0.45), 0, 1);
       state.fovK += (spN - state.fovK) * Math.min(1, dt * 5.5);
 
       const turn = UTIL.lerp(C.turnLow, C.turnHigh, Math.min(1, sp / C.maxSpeed)) * (state.speed >= 0 ? 1 : -1);
-      state.heading += state.steer * turn * dt;
+      const wantYaw = state.steer * turn;
+      state.yawRate += (wantYaw - state.yawRate) * Math.min(1, dt * (IN.yaw || 3.4));
+      state.heading += state.yawRate * dt;
+
+      /* --- 过桥自动对中：靠近桥洞时把船轻轻推向拱洞中线 ---
+         拱洞净宽只有 10~16m，高速（甚至 200km/h 以上）冲进去时人根本来不及修方向。
+         这里不限制速度，只在"船头正对桥洞"时做横向回中 + 轻微航向修正，
+         配合 Terrain.navigable 加宽后的通道，做到"过桥不限速、也不擦桥台"。 */
+      const brsA = window.__BRIDGES;
+      if (brsA && C.bridgeAssist) {
+        for (let i = 0; i < brsA.length; i++) {
+          const b = brsA[i];
+          const dxb = state.x - b.x, dzb = state.z - b.z;
+          if (dxb * dxb + dzb * dzb > 75 * 75) continue;
+          const vx = -b.uz, vz = b.ux;                       // 穿桥方向（桥洞轴线）
+          const u = dxb * b.ux + dzb * b.uz;                 // 沿堤方向偏移
+          const along = dxb * vx + dzb * vz;                 // 桥洞轴线上的位置
+          const fwd = Math.cos(state.heading) * vx + Math.sin(state.heading) * vz;
+          if (Math.abs(along) > 66 || Math.abs(fwd) < 0.30) continue;
+          if (Math.abs(u) > b.span * 0.95) continue;
+          const k = Math.min(1, dt * C.bridgeAssist);
+          state.x -= b.ux * u * k;
+          state.z -= b.uz * u * k;
+          const d = fwd > 0 ? 1 : -1;
+          const wantH = Math.atan2(vz * d, vx * d);
+          let eh = wantH - state.heading;
+          while (eh > Math.PI) eh -= Math.PI * 2;
+          while (eh < -Math.PI) eh += Math.PI * 2;
+          state.heading += eh * Math.min(1, dt * C.bridgeAssist * 0.40);
+          break;
+        }
+      }
 
       /* --- 位移与搁浅/碰撞 --- */
-      const dx = Math.cos(state.heading) * state.speed * dt;
-      const dz = Math.sin(state.heading) * state.speed * dt;
+      let dx = Math.cos(state.heading) * state.speed * dt;
+      let dz = Math.sin(state.heading) * state.speed * dt;
+      /* 风把船吹偏：侧风时航线会慢慢被吹歪，需要主动修正 */
+      if (window.Wind && Wind.on && !state.moored) {
+        const pv = Wind.pushVec(state.speed);
+        dx += pv.x * dt;
+        dz += pv.z * dt;
+      }
       const nx = state.x + dx, nz = state.z + dz;
       const bowX = nx + Math.cos(state.heading) * 3.4;
       const bowZ = nz + Math.sin(state.heading) * 3.4;
@@ -482,31 +646,38 @@ window.Boat = (function () {
         wg.setDrawRange(0, 0);
       }
 
-      /* --- 船头分水：强度随实际速度实时增强/减弱（贴水面，独立于船体俯仰） --- */
+      /* --- 船头分水 / 飞溅水帘：强度随实际速度实时增强/减弱（贴水面，独立于船体俯仰） --- */
       bwT += dt;
       bowWave.position.set(state.x, 0.06, state.z);
       bowWave.rotation.set(0, -state.heading, 0);
       updateBowWave(state.fovK, bwT);
+      spraySheet.position.set(state.x, 0.04, state.z);
+      spraySheet.rotation.set(0, -state.heading, 0);
+      updateSpraySheet(state.fovK, bwT);
 
-      /* --- 船头水花：从船首两侧同时溅起（速度越快越密越高） --- */
+      /* --- 船首飞沫：从船首两侧同时掀起（越快越密越高，加速时再翻一倍） --- */
       const sprayAmt = state.fovK;
-      if (sp > 6) {
-        state.sprayAcc += (10 + 66 * sprayAmt * sprayAmt) * dt;
+      if (sp > 5) {
+        state.sprayAcc += (8 + 96 * sprayAmt * sprayAmt + (state.boosting ? 26 : 0)) * dt;
         const rx = -Math.sin(state.heading), rz = Math.cos(state.heading);
-        const bx = state.x + Math.cos(state.heading) * 4.1;
-        const bz = state.z + Math.sin(state.heading) * 4.1;
-        let guard = 6;
+        const bx = state.x + Math.cos(state.heading) * 4.35;
+        const bz = state.z + Math.sin(state.heading) * 4.35;
+        const wv = (window.Wind && Wind.on) ? Wind.blowVec() : null;
+        let guard = 8;
         while (state.sprayAcc >= 1 && guard-- > 0) {
           state.sprayAcc -= 1;
           const p = parts[state.count % NP]; state.count++;
           const side = Math.random() < 0.5 ? 1 : -1;
-          p.life = 0.40 + Math.random() * 0.45;
-          p.x = bx + rx * side * (0.9 + Math.random() * 0.5);
-          p.z = bz + rz * side * (0.9 + Math.random() * 0.5);
-          p.y = 0.32;
-          p.vx = Math.cos(state.heading) * state.speed * 0.26 + rx * side * (2.2 + Math.random() * 3.4 + sprayAmt * 3.6);
-          p.vz = Math.sin(state.heading) * state.speed * 0.26 + rz * side * (2.2 + Math.random() * 3.4 + sprayAmt * 3.6);
-          p.vy = 1.5 + Math.random() * 2.4 + sprayAmt * 4.4;
+          const out = 2.0 + Math.random() * 3.4 + sprayAmt * 4.8;
+          p.max = 0.4 + Math.random() * 0.55;
+          p.life = p.max;
+          p.x = bx + rx * side * (0.7 + Math.random() * 0.5) - Math.cos(state.heading) * Math.random() * 1.1;
+          p.z = bz + rz * side * (0.7 + Math.random() * 0.5) - Math.sin(state.heading) * Math.random() * 1.1;
+          p.y = 0.20 + Math.random() * 0.38;
+          p.vx = Math.cos(state.heading) * state.speed * 0.30 + rx * side * out + (wv ? wv.x * 1.5 : 0);
+          p.vz = Math.sin(state.heading) * state.speed * 0.30 + rz * side * out + (wv ? wv.z * 1.5 : 0);
+          p.vy = 1.2 + Math.random() * 2.2 + sprayAmt * 5.0;
+          p.sz = 0.35 + Math.random() * 1.05;
         }
       } else {
         state.sprayAcc = 0;
@@ -515,17 +686,27 @@ window.Boat = (function () {
         const p = parts[i];
         if (p.life > 0) {
           p.life -= dt;
-          p.vy -= 12 * dt;
+          p.vy -= 13 * dt;
+          p.vx *= (1 - 0.55 * dt); p.vz *= (1 - 0.55 * dt);
           p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-          if (p.y < 0) { p.y = 0; p.vy = 0; p.vx *= 0.6; p.vz *= 0.6; }
+          if (p.y < 0) {                              // 落回水面：迅速化成一团白沫
+            p.y = 0.02; p.vy = 0;
+            p.vx *= 0.32; p.vz *= 0.32;
+            p.life = Math.min(p.life, 0.18);
+            p.sz *= 1.7;
+          }
           sp[i * 3] = p.x; sp[i * 3 + 1] = p.y; sp[i * 3 + 2] = p.z;
-          salpha[i] = Math.max(0, Math.min(1, p.life * 1.6));
+          const q = Math.max(0, p.life / p.max);
+          salpha[i] = Math.min(1, q * 1.55);
+          ssize[i] = p.sz;
         } else {
           salpha[i] = 0;
+          ssize[i] = 0;
         }
       }
       sg.attributes.position.needsUpdate = true;
       sg.attributes.aA.needsUpdate = true;
+      sg.attributes.aSize.needsUpdate = true;
 
       /* --- 船灯随昼夜自动开关（带烛火抖动） --- */
       if (window.Weather && Weather.lampK) {
@@ -534,16 +715,17 @@ window.Boat = (function () {
         if (model.lamps) BoatModel.setLamps(model, k, flick);
         headLight.intensity = k * flick * 2.6;
 
-        /* 探照灯：雾越浓，散射越强，光柱越"有形"（夜间雾密度本来就更高，所以夜里更明显）。
-           强度全部乘 k，白天为 0，整组光束自然消失，不需要额外开关。 */
+        /* 灯光强度全部乘 k，白天为 0 整组自然消失；雾越浓散射越强 */
         const fogK = UTIL.clamp(Weather.fogDensity / 0.00078, 0.7, 2.2);
-        headSpot.intensity = k * flick * 2.4;
-        beamMat.uniforms.uStrength.value = k * flick * 0.46 * fogK;
+        headSpot.intensity = k * flick * 2.8;
+        beamMat.uniforms.uStrength.value = k * flick * 0.42 * fogK;
         beamMat.uniforms.uTime.value = state.bob;
-        beamMatV.uniforms.uStrength.value = k * flick * 0.24 * fogK;
-        beamMatV.uniforms.uTime.value = state.bob;
-        // 水面光斑固定贴在水面上，只跟船位和航向，不跟船的俯仰横滚（否则会插进水里）
-        spotPivot.position.set(state.x, 0.15, state.z);
+        /* 灯头光晕：随烛火轻微呼吸，让灯本身"亮"起来 */
+        halo.material.opacity = k * flick * 0.82;
+        const hs = 2.25 + 0.28 * Math.sin(state.bob * 7.1) + state.fovK * 0.25;
+        halo.scale.set(hs, hs, 1);
+        // 水面光池固定贴在水面上，只跟船位和航向，不跟船的俯仰横滚（否则会插进水里）
+        spotPivot.position.set(state.x, 0.14, state.z);
         spotPivot.rotation.y = -state.heading;
       }
     };

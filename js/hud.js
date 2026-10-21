@@ -16,6 +16,7 @@ window.HUD = (function () {
 
   H.init = function (c, lmList) {
     course = c;
+    H._mode = H._mode || 'free';
     H._lms = (lmList && lmList.length) ? lmList : c.landmarks;
     // 地标浮标
     const layer = $('labels');
@@ -114,18 +115,86 @@ window.HUD = (function () {
     if (bw) bw.classList.toggle('hot', h > 0.74);
   };
 
-  /* 档位指示：1 慢 / 2 快 / 3 自动巡航 */
+  /* 档位指示：1 慢 / 2 快 / 3 自动巡航（竞速模式固定显示快船） */
   H.setGear = function (g) {
     const el = $('gear');
+    const race = H._mode === 'race';
     if (el) {
-      el.textContent = g === 3 ? '三档 · 巡航' : (g === 2 ? '二档 · 快船' : '一档 · 慢船');
-      el.className = 'gchip g' + g;
+      el.textContent = race ? '竞速 · 快船' : (g === 3 ? '三档 · 巡航' : (g === 2 ? '二档 · 快船' : '一档 · 慢船'));
+      el.className = 'gchip g' + (race ? 2 : g);
       el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
     }
     const b = document.body;
-    if (b) { b.classList.toggle('gear3', g === 3); }
+    if (b) { b.classList.toggle('gear3', g === 3 && !race); }
   };
   H.setVisit = (n, total) => { const el = $('visit'); if (el) el.textContent = '探访 ' + n + ' / ' + total; };
+
+  /* ---------- v2：模式 / 体力 / 风向 / 上下船 ---------- */
+  H.setMode = function (mode) {
+    document.body.classList.toggle('race', mode === 'race');
+    H._mode = mode;
+    const g = $('gear');
+    if (g && mode === 'race') { g.textContent = '竞速 · 快船'; g.className = 'gchip g2'; }
+  };
+
+  /* 体力条：v 0..1 */
+  H.setStamina = function (v) {
+    const f = $('staminafill');
+    const w = Math.max(0, Math.min(1, v || 0));
+    if (f) f.style.width = Math.round(w * 100) + '%';
+    const s = $('stamina');
+    if (s) s.classList.toggle('low', w < 0.26);
+  };
+  H.setStaminaLabel = function (txt) {
+    const l = $('staminalabel');
+    if (l && txt) l.textContent = txt;
+  };
+
+  /* 风向：info = { on, name, level, strength, dir, burst } */
+  H.setWind = function (info) {
+    if (!info) return;
+    const box = $('windbox'), txt = $('windtxt'), ar = $('windarrow');
+    if (box) {
+      box.classList.toggle('off', !info.on);
+      box.classList.toggle('gust', !!info.on && (info.burst || 0) > 0.3);
+    }
+    if (txt) {
+      txt.textContent = info.on
+        ? (info.level > 0 ? info.name + '风 · ' + info.level + '级' : '微风')
+        : '无风';
+    }
+    if (ar) ar.style.transform = 'rotate(' + (info.dir * 180 / Math.PI) + 'deg)';
+    const tg = $('windtog');
+    if (tg) tg.textContent = '风力 ' + (info.on ? '开' : '关');
+  };
+
+  H.onWindTog = fn => { const el = $('windtog'); if (el) el.addEventListener('click', fn); };
+
+  H.showBoatBtn = function (which) {
+    const box = $('boatbtns'), d = $('disembark'), b = $('board');
+    if (!box) return;
+    if (d) d.classList.toggle('on', which === 'disembark');
+    if (b) b.classList.toggle('on', which === 'board');
+    box.classList.toggle('show', !!which);
+  };
+  H.onDisembark = fn => { const el = $('disembark'); if (el) el.addEventListener('click', fn); };
+  H.onBoard = fn => { const el = $('board'); if (el) el.addEventListener('click', fn); };
+  H.onMode = function (fn) {
+    const box = $('modesel');
+    if (!box) return;
+    box.querySelectorAll('.mode').forEach(btn => {
+      btn.addEventListener('click', () => {
+        box.querySelectorAll('.mode').forEach(b2 => b2.classList.toggle('on', b2 === btn));
+        fn(btn.getAttribute('data-mode') || 'free');
+      });
+    });
+  };
+  H.setModeChoice = function (m) {
+    const box = $('modesel');
+    if (!box) return;
+    box.querySelectorAll('.mode').forEach(b => b.classList.toggle('on', b.getAttribute('data-mode') === m));
+  };
+
   H.setCompass = h => {
     const el = $('compass'); if (!el) return;
     const fx = Math.cos(h), fz = Math.sin(h);
@@ -177,6 +246,12 @@ window.HUD = (function () {
     $('rdist').textContent = (data.distance / 1000).toFixed(2) + ' km';
     $('rtop').textContent = Math.round(data.top * 3.6) + ' km/h';
     $('rcoll').textContent = data.collisions;
+    const rm = $('rmode');
+    if (rm) rm.textContent = data.mode === 'race'
+      ? '竞速模式 · 全湖 ' + data.total + ' 景'
+      : '自由模式 · 不计时';
+    const nb = $('rnew');
+    if (nb) nb.textContent = data.newBest ? '最 佳 纪 录' : '';
     el.classList.remove('hide');
     document.body.classList.add('uiopen');
   };
@@ -193,7 +268,7 @@ window.HUD = (function () {
       const l = it.l;
       const dx = l.x - camPos.x, dz = l.z - camPos.z;
       const d = Math.hypot(dx, dz);
-      if (d > (l.visitR || 500) * 1.1) continue;
+      if (d > Math.max(l.visitR || 0, 420) * 1.1) continue;
       const dot = (dx * fx + dz * fz) / (d || 1);
       if (dot < 0.18) continue;
       cands.push({ it, d });
@@ -256,15 +331,27 @@ window.HUD = (function () {
   /* 环线抽稀点（一次性，避免每帧遍历 2000+ 点） */
   const routePts = [];
   let routeReady = false;
+  /* v2.2：航线上 23 处「泊靠点」= 船的停靠位置，画到小地图上 */
+  let berthPts = [];
   function buildRoutePts() {
     routePts.length = 0;
     routeReady = false;
-    const c = course && course.center;
+    /* 优先画 v2 的全湖巡回航线（自动巡航 / 竞速箭头共用的那条） */
+    const c = (window.__TOUR && window.__TOUR.length > 8) ? window.__TOUR : (course && course.center);
     if (!c || !mapBounds) return;
     const step = Math.max(1, Math.round(c.length / 420));
     for (let i = 0; i < c.length; i += step) routePts.push([mapBounds.X(c[i][0]), mapBounds.Y(c[i][1])]);
     routeReady = routePts.length > 8;
+    /* 泊靠点（l.ax / l.az 由 game.js 的航线规划写入） */
+    const lm = (window.Landmarks && Landmarks.list) || H._lms || [];
+    berthPts = [];
+    for (let i = 0; i < lm.length; i++) {
+      const l = lm[i];
+      if (l.ax === undefined || l.az === undefined) continue;
+      berthPts.push({ x: l.ax, z: l.az, visited: !!l.visited });
+    }
   }
+  H.refreshRoute = buildRoutePts;
   function routePath(g) {
     g.beginPath();
     for (let i = 0; i < routePts.length; i++) {
@@ -298,11 +385,44 @@ window.HUD = (function () {
   H.drawMinimap = function (boat, traffic, dock, opt) {
     const cv = $('minimap');
     if (!cv || !staticMap) return;
+    opt = opt || {};
     const g = cv.getContext('2d');
     g.clearRect(0, 0, 296, 296);
     g.drawImage(staticMap, 0, 0);
     const X = mapBounds.X, Y = mapBounds.Y;
-    drawRoute(g, (opt && opt.gear) || 1, (opt && opt.t) || 0);
+    drawRoute(g, opt.gear || 1, opt.t || 0);
+
+    /* ---- 船的停靠点（v2.2 需求 13）----
+       航线上的 23 处泊靠点画成空心小圈（已探访的变金色），
+       当前系泊位置再画一个实心锚点 + 脉冲圈，一眼看出"船停在哪"。 */
+    if (berthPts.length) {
+      for (let i = 0; i < berthPts.length; i++) {
+        const b = berthPts[i];
+        const x = X(b.x), y = Y(b.z);
+        g.beginPath(); g.arc(x, y, 2.2, 0, 7);
+        g.lineWidth = 1.1;
+        g.strokeStyle = b.visited ? 'rgba(255,210,60,.95)' : 'rgba(206,236,216,.72)';
+        g.stroke();
+        g.beginPath();
+        g.moveTo(x - 3.6, y); g.lineTo(x + 3.6, y);
+        g.strokeStyle = b.visited ? 'rgba(255,210,60,.35)' : 'rgba(206,236,216,.30)';
+        g.lineWidth = 0.8; g.stroke();
+      }
+    }
+    /* 当前系泊点：锚 */
+    if (opt.moored) {
+      const mx = X(opt.moored.x), my = Y(opt.moored.z);
+      const pulse = 3.6 + Math.sin((opt.t || 0) * 3.4) * 1.6;
+      g.beginPath(); g.arc(mx, my, pulse + 2.2, 0, 7);
+      g.strokeStyle = 'rgba(255,214,120,.55)'; g.lineWidth = 1; g.stroke();
+      g.save();
+      g.translate(mx, my);
+      g.strokeStyle = '#ffd86a'; g.fillStyle = '#ffd86a'; g.lineWidth = 1.5; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(0, -5); g.lineTo(0, 4.2); g.stroke();          // 锚杆
+      g.beginPath(); g.arc(0, -5, 1.6, 0, 7); g.stroke();                    // 锚环
+      g.beginPath(); g.moveTo(-3.6, 1.2); g.quadraticCurveTo(0, 5.6, 3.6, 1.2); g.stroke(); // 锚爪
+      g.restore();
+    }
     if (dock) {
       g.fillStyle = '#e8c86a';
       g.fillRect(X(dock.x) - 2.5, Y(dock.z) - 2.5, 5, 5);
@@ -323,6 +443,14 @@ window.HUD = (function () {
       g.fillStyle = '#f6f1e7';
       g.beginPath(); g.moveTo(0, -8); g.lineTo(5.2, 6); g.lineTo(0, 3); g.lineTo(-5.2, 6); g.closePath(); g.fill();
       g.restore();
+    }
+    /* 上岸时：玩家自己画成一个小圆点（船仍以锚标在原地） */
+    if (opt.player) {
+      const px = X(opt.player.x), py = Y(opt.player.z);
+      g.beginPath(); g.arc(px, py, 2.4, 0, 7);
+      g.fillStyle = '#eaf6ee'; g.fill();
+      g.beginPath(); g.arc(px, py, 4.4, 0, 7);
+      g.strokeStyle = 'rgba(234,246,238,.45)'; g.lineWidth = 1; g.stroke();
     }
   };
 

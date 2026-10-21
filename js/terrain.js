@@ -186,15 +186,26 @@ window.Terrain = (function () {
       for (let i = 0; i < brs.length; i++) {
         const b = brs[i];
         const dx = x - b.x, dz = z - b.z;
-        const rr = b.span * 0.75;
+        const rr = b.span;                              // 捕获半径放大到整个拱跨
         if (dx * dx + dz * dz > rr * rr) continue;
         const u = dx * b.ux + dz * b.uz;                 // 沿堤方向
         const v = -dx * b.uz + dz * b.ux;                // 穿桥方向
-        const halfClear = b.span * 0.38;                 // 拱洞净宽的一半
-        const vIn = Math.abs(v) < b.width * 0.5 + 6;     // 桥身进深范围内
-        if (Math.abs(u) < halfClear && vIn) return true; // 拱洞正中：可穿
-        // 桥台一带（拱洞两侧、桥身进深内）不可穿；注意不能连带封住隧道进出口
-        if (Math.abs(u) >= halfClear && Math.abs(u) < halfClear + 1.6 && Math.abs(v) < b.width * 0.5 + 8) return false;
+        /* v2：拱洞通道加宽 + 进出口延长
+           拱洞净宽取 0.46 倍拱跨（原 0.38 太窄，船头前探 3.4m 一歪就蹭桥台），
+           进出口沿桥轴延长到堤身进深 + 14m，让"接近—穿洞—出洞"整段都在通道里，
+           这样过桥既不需要限速，也不会被桥台判定成撞墙。 */
+        const halfClear = b.span * 0.46;
+        if (b.ax) {
+          /* 旋转 90° 的桥：拱洞轴线沿 u（顺堤），净宽沿 v —— 两个轴对调判定 */
+          const uIn = Math.abs(u) < b.width * 0.5 + 14;
+          if (Math.abs(v) < halfClear && uIn) return true;
+          if (Math.abs(v) >= halfClear && Math.abs(v) < halfClear + 2.2 && uIn) return false;
+        } else {
+          const vIn = Math.abs(v) < b.width * 0.5 + 14;
+          if (Math.abs(u) < halfClear && vIn) return true; // 拱洞正中：可穿
+          // 桥台一带（拱洞两侧、桥身进深内）不可穿；注意不能连带封住隧道进出口
+          if (Math.abs(u) >= halfClear && Math.abs(u) < halfClear + 2.2 && vIn) return false;
+        }
       }
     }
     for (let i = 0; i < course.islands.length; i++) if (U.pointInRing(x, z, course.islands[i])) return false;
@@ -276,6 +287,88 @@ window.Terrain = (function () {
     scene.add(terrain);
     T.mesh = terrain;
 
+    /* ---------------- 近景地面细节贴片（v2.2 岸上建模修复） ----------------
+       基础地形 20m 一格，第一人称上岸低头看是几个巨大三角面，且脚踩的是
+       heightAt 的解析高程、与"眼睛看到的网格插值面"不是同一个面（会浮空/陷地）。
+       这里：
+         1) T.meshHeightAt() —— 按网格两三角面精确插值，给出"看到的那个面"的高度；
+         2) 玩家脚下 66m×66m、1.5m 一格的高密度贴片，高度取解析高程并叠一点起伏，
+            最外一圈渐混到 meshHeightAt，保证与外围地形严丝合缝不裂缝。 */
+    T.meshHeightAt = function (x, z) {
+      const fx = (x - X0) / stepX, fz = (z - Z0) / stepZ;
+      const i = UTIL.clamp(Math.floor(fx), 0, nx - 2), j = UTIL.clamp(Math.floor(fz), 0, nz - 2);
+      const u = UTIL.clamp(fx - i, 0, 1), v = UTIL.clamp(fz - j, 0, 1);
+      const h00 = H[j * nx + i], h10 = H[j * nx + i + 1];
+      const h01 = H[(j + 1) * nx + i], h11 = H[(j + 1) * nx + i + 1];
+      /* 与索引顺序一致：三角 (a,c,b) 与 (b,c,d)，沿 b—c 对角线切分 */
+      if (u + v <= 1) return h00 + (h10 - h00) * u + (h01 - h00) * v;
+      return h11 + (h01 - h11) * (1 - u) + (h10 - h11) * (1 - v);
+    };
+
+    const DN = 45, DSZ = 66, DCELL = DSZ / (DN - 1);
+    const dPos = new Float32Array(DN * DN * 3);
+    const dCol = new Float32Array(DN * DN * 3);
+    const dUv = new Float32Array(DN * DN * 2);
+    const dIdx = [];
+    for (let j = 0; j < DN - 1; j++) {
+      for (let i = 0; i < DN - 1; i++) {
+        const a = j * DN + i, b = a + 1, c5 = a + DN, d5 = c5 + 1;
+        dIdx.push(a, c5, b, b, c5, d5);
+      }
+    }
+    const dGeo = new THREE.BufferGeometry();
+    dGeo.setAttribute('position', new THREE.BufferAttribute(dPos, 3));
+    dGeo.setAttribute('color', new THREE.BufferAttribute(dCol, 3));
+    dGeo.setAttribute('uv', new THREE.BufferAttribute(dUv, 2));
+    dGeo.setIndex(dIdx);
+    const dMesh = new THREE.Mesh(dGeo, new THREE.MeshLambertMaterial({
+      vertexColors: true, map: groundTex, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3
+    }));
+    dMesh.frustumCulled = false;
+    dMesh.visible = false;
+    dMesh.renderOrder = 1;
+    dMesh.receiveShadow = !!tier.shadow;
+    dMesh.layers.enable(1);
+    scene.add(dMesh);
+    T.detailMesh = dMesh;
+    let dAt = { x: 1e9, z: 1e9 };
+
+    T.detailVisible = function (on) {
+      dMesh.visible = !!on;
+      if (!on) dAt.x = 1e9;
+    };
+    /* 以 (x,z) 为中心重建贴片顶点；移动不足 2.5m 时直接跳过（避免每帧重算） */
+    T.updateDetail = function (x, z, force) {
+      if (!dMesh.visible) return;
+      const dx = x - dAt.x, dz = z - dAt.z;
+      if (!force && dx * dx + dz * dz < 6.25) return;
+      dAt.x = x; dAt.z = z;
+      const half = DSZ / 2;
+      const edge = DN * 0.20;
+      const tmp = new THREE.Color();
+      for (let j = 0; j < DN; j++) {
+        for (let i = 0; i < DN; i++) {
+          const wx = x - half + i * DCELL, wz = z - half + j * DCELL;
+          const k = j * DN + i;
+          const e = UTIL.smoothstep(0, 1, UTIL.clamp(Math.min(Math.min(i, DN - 1 - i), Math.min(j, DN - 1 - j)) / edge, 0, 1));
+          const hm = T.meshHeightAt(wx, wz);
+          const hd = T.heightAt(wx, wz) + (U.noise2(wx * 0.31, wz * 0.31) - 0.5) * 0.055;
+          const h = hm + (hd - hm) * e + 0.022;
+          dPos[k * 3] = wx; dPos[k * 3 + 1] = h; dPos[k * 3 + 2] = wz;
+          dUv[k * 2] = wx / 42; dUv[k * 2 + 1] = wz / 42;
+          tmp.copy(cGrass).lerp(cGrass2, U.fbm(wx * 0.014, wz * 0.014, 3));
+          tmp.lerp(cRock, UTIL.smoothstep(12, 60, h) * 0.35);
+          tmp.multiplyScalar((0.9 + U.noise2(wx * 0.02, wz * 0.02) * 0.2) * (0.94 + U.noise2(wx * 0.09, wz * 0.09) * 0.12));
+          dCol[k * 3] = tmp.r; dCol[k * 3 + 1] = tmp.g; dCol[k * 3 + 2] = tmp.b;
+        }
+      }
+      dGeo.attributes.position.needsUpdate = true;
+      dGeo.attributes.uv.needsUpdate = true;
+      dGeo.attributes.color.needsUpdate = true;
+      dGeo.computeVertexNormals();
+      dGeo.computeBoundingSphere();
+    };
+
     /* ---- 岸线裙边 + 石驳岸 ---- */
     const stoneTex = Textures.get('stone');
     function resample(ring, step) {
@@ -306,10 +399,14 @@ window.Terrain = (function () {
         const dMinus = T.shoreDist(p.x - nx * 4, p.z - nz * 4);
         if (dPlus < dMinus) { p.nx = -nx; p.nz = -nz; } else { p.nx = nx; p.nz = nz; }
       }
-      const offs = [0, 4, 9, 16, 26, 40];
+      /* v2.2：裙边只保留水线到岸内 7m 的石驳岸带。
+         原来铺到 40m 内，与地形大面片几乎共面 → 大面积 z-fighting，
+         上岸后是一整片忽明忽暗的暗色三角（"地面建模坏了"的元凶）。
+         现在收窄 + 正方偏移（让地形在共面处胜出），只留水边一道石砌驳岸。 */
+      const offs = [0, 3.5, 7];
       const ringsP = offs.map(o => pts.map(p => ({ x: p.x + p.nx * o, z: p.z + p.nz * o })));
       const ringsY = ringsP.map((rp, k) => rp.map(p => k === 0 ? 1.42 : T.heightAt(p.x, p.z)));
-      const layerShade = [0.5, 0.63, 0.75, 0.85, 0.93, 1.0];   // 立面明暗：水线暗、坡顶亮
+      const layerShade = [0.58, 0.76, 0.96];   // 立面明暗：水线暗、坡顶亮
       const vpos = [], vcol = [], vuv = [], vidx = [];
       for (let k = 0; k < offs.length - 1; k++) {
         const base = vpos.length / 3;
@@ -343,7 +440,10 @@ window.Terrain = (function () {
       sg.setAttribute('uv', new THREE.Float32BufferAttribute(vuv, 2));
       sg.setIndex(vidx);
       sg.computeVertexNormals();
-      const skirtMesh = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({ map: groundTex, vertexColors: true, side: THREE.DoubleSide, color: 0xbcc4a0 }));
+      const skirtMesh = new THREE.Mesh(sg, new THREE.MeshLambertMaterial({
+        map: groundTex, vertexColors: true, side: THREE.DoubleSide, color: 0xbcc4a0,
+        polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 4
+      }));
       skirtMesh.layers.enable(1);
       scene.add(skirtMesh);
     }
